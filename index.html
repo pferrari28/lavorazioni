@@ -169,6 +169,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
       <span class="spacer"></span>
       <button class="btn ghost" id="btn-xls" type="button">Esporta Excel giornaliero</button>
       <button class="btn amber" id="btn-salva" type="button">Salva giornata</button>
+      <button class="btn" id="btn-chiudi" type="button" title="Salva la giornata e ne apre una nuova">Chiudi giornata</button>
     </div>
     <section class="view" id="v-lav"></section>
     <section class="view" id="v-archivio"></section>
@@ -266,8 +267,8 @@ const PF_KEYS = ['rif', 'marchio', 'stag', 'pezzi', 'pesoPF', 'sfridi', 'cat3', 
 const NUM_T = new Set(['int', 'kg', 'mese', 'anno']);
 
 // ---------- formati ----------
-const fmtKg = n => (n == null || n === '' || isNaN(n)) ? '' : Number(n).toLocaleString('it-IT', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-const fmtKg2 = n => Number(n || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtKg = n => (n == null || n === '' || isNaN(n)) ? '' : Number(n).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
+const fmtKg2 = n => Number(n || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
 const isoOggi = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const isoToIt = iso => iso ? iso.slice(8, 10) + '-' + iso.slice(5, 7) + '-' + iso.slice(0, 4) : '';
 const meseKey = iso => iso.slice(0, 7);
@@ -605,6 +606,18 @@ async function salvaGiornata() {
   finally { b.disabled = false; }
 }
 $('btn-salva').addEventListener('click', salvaGiornata);
+function giornoLavorativoDopo(iso) {
+  const d = new Date(iso + 'T12:00'); do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+$('btn-chiudi').addEventListener('click', async () => {
+  if (CUR.dirty || !CUR.salvata) { if (!(await salvaGiornata())) return; }
+  const prop = giornoLavorativoDopo(CUR.data);
+  apriModal(`<h2>Giornata del ${isoToIt(CUR.data)} chiusa</h2><p>È salvata in <b>Archivio giornalieri</b>, da dove puoi riaprirla o esportare l'Excel per il consorzio.</p>
+    <p>Data della nuova giornata: <input type="date" id="nuova-data" value="${prop}" style="font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px"></p>
+    <div class="modal-btns"><button class="btn ghost" data-close>Resta qui</button><button class="btn amber" id="apri-nuova">Apri nuova giornata</button></div>`);
+  $('apri-nuova').onclick = () => { const d = $('nuova-data').value; if (!d) return; chiudiModal(); PAGE = 'grattugiato'; apriGiornata(d); };
+});
 $('btn-xls').addEventListener('click', async () => {
   const errs = errori(CUR);
   if (errs.length) { mostraErrori(errs, 'Prima di esportare correggi questi campi'); return; }
@@ -700,6 +713,18 @@ function onClickCella(e) {
 }
 function onTasto(e) {
   const inp = e.target; if (!inp.matches('input')) return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    const len = inp.value.length, a = inp.selectionStart, b = inp.selectionEnd;
+    const tutto = a === 0 && b === len;
+    if (e.key === 'ArrowLeft' && !(tutto || (a === 0 && b === 0))) return;
+    if (e.key === 'ArrowRight' && !(tutto || (a === len && b === len))) return;
+    const celle = [...inp.closest('tr').querySelectorAll('td[data-f]')].filter(td => td.querySelector('input'));
+    const j = celle.indexOf(inp.closest('td')) + (e.key === 'ArrowLeft' ? -1 : 1);
+    if (j < 0 || j >= celle.length) return;
+    e.preventDefault(); inp.dispatchEvent(new Event('change', { bubbles: true }));
+    const nx = celle[j].querySelector('input'); nx.focus(); nx.select(); nx.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    return;
+  }
   let dr = 0;
   if (e.key === 'Enter' || e.key === 'ArrowDown') dr = 1; else if (e.key === 'ArrowUp') dr = -1; else return;
   e.preventDefault();
