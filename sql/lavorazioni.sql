@@ -45,3 +45,20 @@ create policy lav_matricole_paolo on public.lav_matricole
   with check (lower(coalesce((select auth.jwt()) ->> 'email', '')) = 'admin@lotti.local');
 revoke all on public.lav_matricole from anon;
 grant select, insert, update, delete on public.lav_matricole to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Bozze (tasto «Salva bozza») — 17/11/2026
+-- ---------------------------------------------------------------------
+create table if not exists public.lav_bozze (
+  data          date primary key,
+  dati          jsonb not null default '{}'::jsonb,
+  aggiornato_il timestamptz not null default now()
+);
+alter table public.lav_bozze enable row level security;
+drop policy if exists lav_bozze_paolo on public.lav_bozze;
+create policy lav_bozze_paolo on public.lav_bozze
+  for all to authenticated
+  using (lower(coalesce((select auth.jwt()) ->> 'email', '')) = 'admin@lotti.local')
+  with check (lower(coalesce((select auth.jwt()) ->> 'email', '')) = 'admin@lotti.local');
+revoke all on public.lav_bozze from anon;
+grant select, insert, update, delete on public.lav_bozze to authenticated;

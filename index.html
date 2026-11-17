@@ -40,6 +40,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:"Barlow","Segoe 
 .stato.ok{background:var(--ok-bg);color:var(--ok);}
 .stato.mod{background:var(--warn-bg);color:var(--warn);}
 .stato.new{background:#E7EEF6;color:var(--link);}
+.stato.bz{background:#EDE7F6;color:#5B3E96;}
 .daybar .spacer{flex:1;}
 .btn{border:0;border-radius:6px;background:var(--green);color:#fff;font:inherit;font-weight:600;font-size:.92rem;padding:9px 16px;cursor:pointer;}
 .btn:hover{background:var(--green-dark);}
@@ -168,6 +169,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
       <span id="g-stato" class="stato new">Nuova</span>
       <span class="spacer"></span>
       <button class="btn ghost" id="btn-xls" type="button">Esporta Excel giornaliero</button>
+      <button class="btn ghost" id="btn-bozza" type="button" title="Salva il lavoro a metà, anche con errori: lo ritrovi riaprendo la stessa data">Salva bozza</button>
       <button class="btn amber" id="btn-salva" type="button">Salva giornata</button>
       <button class="btn" id="btn-chiudi" type="button" title="Salva la giornata e ne apre una nuova">Chiudi giornata</button>
     </div>
@@ -389,6 +391,23 @@ const DB = {
     const { error } = await sb.from('lav_giornate').upsert({ data: d, dati, totali, aggiornato_il: new Date().toISOString() });
     if (error) throw error;
   },
+  async bozza(d) {
+    if (DEMO) { try { const o = JSON.parse(localStorage.getItem('lav_demo_bozze') || '{}'); return o[d] || null; } catch (e) { return null; } }
+    const { data, error } = await sb.from('lav_bozze').select('dati,aggiornato_il').eq('data', d).maybeSingle(); if (error) throw error; return data;
+  },
+  async elencoBozze() {
+    if (DEMO) { try { const o = JSON.parse(localStorage.getItem('lav_demo_bozze') || '{}'); return Object.keys(o).sort().map(d => ({ data: d, aggiornato_il: o[d].aggiornato_il })); } catch (e) { return []; } }
+    const { data, error } = await sb.from('lav_bozze').select('data,aggiornato_il').order('data'); if (error) throw error; return data;
+  },
+  async salvaBozzaDB(d, dati) {
+    const ora = new Date().toISOString();
+    if (DEMO) { let o = {}; try { o = JSON.parse(localStorage.getItem('lav_demo_bozze') || '{}'); } catch (e) {} o[d] = { dati, aggiornato_il: ora }; try { localStorage.setItem('lav_demo_bozze', JSON.stringify(o)); } catch (e) {} return; }
+    const { error } = await sb.from('lav_bozze').upsert({ data: d, dati, aggiornato_il: ora }); if (error) throw error;
+  },
+  async eliminaBozza(d) {
+    if (DEMO) { try { const o = JSON.parse(localStorage.getItem('lav_demo_bozze') || '{}'); delete o[d]; localStorage.setItem('lav_demo_bozze', JSON.stringify(o)); } catch (e) {} return; }
+    const { error } = await sb.from('lav_bozze').delete().eq('data', d); if (error) throw error;
+  },
   async matricole() {
     if (DEMO) { let l; try { l = JSON.parse(localStorage.getItem('lav_demo_matr') || 'null'); } catch (e) {} return l || MATRICOLE_INIZIALI.slice(); }
     const { data, error } = await sb.from('lav_matricole').select('matricola'); if (error) throw error; return data.map(x => x.matricola);
@@ -562,21 +581,34 @@ function vai(p) {
 function aggiornaStato() {
   const s = $('g-stato');
   if (CUR.dirty) { s.className = 'stato mod'; s.textContent = 'Modifiche non salvate'; }
+  else if (CUR.bozza) { s.className = 'stato bz'; s.textContent = 'Bozza salvata ' + CUR.bozza; }
   else if (CUR.salvata) { s.className = 'stato ok'; s.textContent = 'Salvata'; }
   else if (!CUR.data) { s.className = 'stato mod'; s.textContent = 'Inserisci la data produzione'; }
   else { s.className = 'stato new'; s.textContent = 'Nuova giornata'; }
   $('g-data').value = CUR.data;
 }
+function oraBozza(ts) { const t = new Date(ts); return 'il ' + String(t.getDate()).padStart(2, '0') + '/' + String(t.getMonth() + 1).padStart(2, '0') + ' alle ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0'); }
+async function salvaBozzaClick() {
+  if (serveData()) return;
+  const dati = datiDaSalvare(CUR.dati);
+  if (!KEYS.some(k => dati[k].righe.length || dati[k].linea)) { toast('La giornata è vuota: non c\'è niente da salvare', true); return; }
+  const b = $('btn-bozza'); b.disabled = true;
+  try { await DB.salvaBozzaDB(CUR.data, dati); CUR.bozza = oraBozza(new Date()); CUR.dirty = false; BOZZE = null; togliBozza(); aggiornaStato(); toast('Bozza del ' + isoToIt(CUR.data) + ' salvata: la ritrovi riaprendo questa data'); }
+  catch (e) { toast('Errore nel salvataggio della bozza: ' + e.message, true); }
+  finally { b.disabled = false; }
+}
+let BOZZE = null;
 function segnaModifica() { CUR.dirty = true; aggiornaStato(); salvaBozza(); }
 async function apriGiornata(d, { forza } = {}) {
   if (CUR && CUR.dirty && !forza) {
-    const ok = await chiedi('Modifiche non salvate', `La giornata del <b>${isoToIt(CUR.data)}</b> ha modifiche non salvate. Se cambi giornata le perdi.`, 'Cambia senza salvare', 'Annulla');
+    const ok = await chiedi('Modifiche non salvate', `La giornata del <b>${isoToIt(CUR.data)}</b> ha modifiche non salvate. Se cambi giornata le perdi (usa prima <b>Salva bozza</b> o <b>Salva giornata</b>).`, 'Cambia senza salvare', 'Annulla');
     if (!ok) { $('g-data').value = CUR.data; return; }
   }
   try {
-    const dati = await DB.leggi(d);
+    const [dati, bz] = await Promise.all([DB.leggi(d), DB.bozza(d)]);
     CUR = dati ? { data: d, dati: completaRighe(JSON.parse(JSON.stringify(dati))), salvata: true, dirty: false } : giornataVuota(d);
     if (dati) CACHE_DATI[d] = dati;
+    if (bz) { CUR.dati = completaRighe(JSON.parse(JSON.stringify(bz.dati))); CUR.bozza = oraBozza(bz.aggiornato_il); setTimeout(() => toast('Ho aperto la bozza del ' + isoToIt(d) + ' (' + CUR.bozza + ')'), 50); }
   } catch (e) { toast('Errore nel caricamento: ' + e.message, true); return; }
   togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = '');
   aggiornaStato();
@@ -605,6 +637,7 @@ async function salvaGiornata() {
   try {
     await DB.salva(CUR.data, dati, tot);
     CUR.salvata = true; CUR.dirty = false; CACHE_DATI[CUR.data] = dati;
+    if (CUR.bozza) { try { await DB.eliminaBozza(CUR.data); } catch (e) {} CUR.bozza = null; BOZZE = null; }
     if (ARCH) { const i = ARCH.findIndex(x => x.data === CUR.data); const rec = { data: CUR.data, totali: tot }; if (i >= 0) ARCH[i] = rec; else { ARCH.push(rec); ARCH.sort((a, b) => b.data.localeCompare(a.data)); } }
     togliBozza(); aggiornaStato(); toast('Giornata del ' + isoToIt(CUR.data) + ' salvata');
     return true;
@@ -612,6 +645,7 @@ async function salvaGiornata() {
   finally { b.disabled = false; }
 }
 $('btn-salva').addEventListener('click', salvaGiornata);
+$('btn-bozza').addEventListener('click', salvaBozzaClick);
 function giornoLavorativoPrima(iso) {
   const d = new Date(iso + 'T12:00'); do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -622,7 +656,7 @@ function giornoLavorativoDopo(iso) {
 }
 $('btn-chiudi').addEventListener('click', async () => {
   if (serveData()) return;
-  if (CUR.dirty || !CUR.salvata) { if (!(await salvaGiornata())) return; }
+  if (CUR.dirty || !CUR.salvata || CUR.bozza) { if (!(await salvaGiornata())) return; }
   const d = CUR.data;
   CUR = giornataVuota(''); togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = ''); aggiornaStato(); vai('grattugiato');
   apriModal(`<h2>Giornata del ${isoToIt(d)} chiusa</h2><p>È salvata in <b>Archivio giornalieri</b>, da dove puoi riaprirla, cambiarne la data o esportare l'Excel per il consorzio.</p><p>Per la prossima giornata inserisci in alto la <b>Data produzione</b>.</p>
@@ -632,7 +666,7 @@ $('btn-xls').addEventListener('click', async () => {
   if (serveData()) return;
   const errs = errori(CUR);
   if (errs.length) { mostraErrori(errs, 'Prima di esportare correggi questi campi'); return; }
-  if (CUR.dirty) {
+  if (CUR.dirty || CUR.bozza || !CUR.salvata) {
     const ok = await chiedi('Salvare prima di esportare?', 'Ci sono modifiche non salvate. Salvo la giornata e poi creo il file Excel?', 'Salva ed esporta', 'Annulla');
     if (!ok || !(await salvaGiornata())) return;
   }
@@ -653,7 +687,8 @@ function mostraErrori(errs, titolo) {
 // ---------- pagine di compilazione ----------
 function renderLav() {
   if (!CUR.data) {
-    $('v-lav').innerHTML = `<div class="page-title"><h2>${LAV[PAGE].nome.toUpperCase()}</h2></div><div class="panel"><div class="empty" style="font-size:1.05rem">Per iniziare inserisci in alto la <b>Data produzione</b> delle schede che devi registrare.</div></div>`;
+    $('v-lav').innerHTML = `<div class="page-title"><h2>${LAV[PAGE].nome.toUpperCase()}</h2></div><div class="panel"><div class="empty" style="font-size:1.05rem">Per iniziare inserisci in alto la <b>Data produzione</b> delle schede che devi registrare.</div><div id="bozze-box"></div></div>`;
+    mostraBozze($('bozze-box'));
     setTimeout(() => { try { $('g-data').focus(); } catch (e) {} }, 0);
     return;
   }
@@ -795,6 +830,14 @@ function applicaRicerca() {
   $('cerca-info').textContent = q ? n + (n === 1 ? ' riga trovata' : ' righe trovate') : '';
 }
 
+async function mostraBozze(box) {
+  try { if (!BOZZE) BOZZE = await DB.elencoBozze(); } catch (e) { return; }
+  if (!box || !BOZZE.length) return;
+  box.innerHTML = `<div style="border-top:1px solid var(--line);padding-top:14px;margin-top:4px"><b>Bozze in sospeso</b><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${BOZZE.map(b =>
+    `<button class="btn ghost sm" data-bozza="${b.data}">Riprendi bozza del ${isoToIt(b.data)}</button>`).join('')}</div></div>`;
+  box.onclick = e => { const b = e.target.closest('[data-bozza]'); if (b) { apriGiornata(b.dataset.bozza); } };
+}
+
 // ---------- archivio giornalieri ----------
 async function caricaArchivio(forza) {
   if (ARCH && !forza) return ARCH;
@@ -818,6 +861,21 @@ async function renderArchivio() {
       <td><div class="act"><button class="btn sm" data-apri="${x.data}">Apri</button><button class="btn ghost sm" data-xls="${x.data}" title="File giornaliero con tutte le 5 pagine compilate">Esporta Excel giornaliero</button><button class="btn ghost sm" data-mod="${x.data}" title="Cambia la data di produzione di questa giornata">Modifica data</button><button class="btn ghost sm" data-del="${x.data}" title="Elimina giornata">Elimina</button></div></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">Nessuna giornata salvata.</div>'}</div>`;
   $('arch-mese').addEventListener('change', e => { ARCH_MESE = e.target.value; renderArchivio(); });
+  try { if (!BOZZE) BOZZE = await DB.elencoBozze(); } catch (e) { BOZZE = []; }
+  if (BOZZE.length) {
+    const p = document.createElement('div'); p.className = 'panel';
+    p.innerHTML = `<h3>Bozze in sospeso (non ancora salvate come giornata)</h3><table class="list"><tbody>${BOZZE.map(b => `<tr><td><b>${isoToIt(b.data)}</b></td><td style="color:var(--muted)">salvata ${oraBozza(b.aggiornato_il)}</td><td><div class="act"><button class="btn sm" data-bz-apri="${b.data}">Riprendi</button><button class="btn ghost sm" data-bz-del="${b.data}">Elimina bozza</button></div></td></tr>`).join('')}</tbody></table>`;
+    v.querySelector('.toolbar').after(p);
+    p.addEventListener('click', async e => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.bzApri) { PAGE = 'grattugiato'; await apriGiornata(b.dataset.bzApri); }
+      else if (b.dataset.bzDel) {
+        const d = b.dataset.bzDel;
+        if (!(await chiedi('Eliminare la bozza?', `La bozza del <b>${isoToIt(d)}</b> verrà eliminata. Se esiste una giornata salvata con questa data, resta com'è.`, 'Elimina bozza', 'Annulla', true))) return;
+        try { await DB.eliminaBozza(d); BOZZE = null; if (CUR.data === d) CUR.bozza = null; aggiornaStato(); toast('Bozza eliminata'); renderArchivio(); } catch (x) { toast('Errore: ' + x.message, true); }
+      }
+    });
+  }
   v.querySelector('.panel').addEventListener('click', async e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.apri) { PAGE = 'grattugiato'; await apriGiornata(b.dataset.apri); }
@@ -1213,7 +1271,7 @@ let toastT; function toast(m, err) { const t = $('toast'); t.textContent = m; t.
 window.addEventListener('beforeunload', e => { if (CUR && CUR.dirty) { e.preventDefault(); e.returnValue = ''; } });
 
 $('btn-aggiorna').addEventListener('click', async () => {
-  ARCH = null; Object.keys(CACHE_DATI).forEach(k => delete CACHE_DATI[k]);
+  ARCH = null; BOZZE = null; Object.keys(CACHE_DATI).forEach(k => delete CACHE_DATI[k]);
   if (LAV[PAGE]) { if (!CUR.dirty) await apriGiornata(CUR.data, { forza: true }); else toast('Dati aggiornati (la giornata aperta ha modifiche non salvate, non l\'ho ricaricata)'); }
   else vai(PAGE);
 });
