@@ -172,6 +172,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
       <button class="btn ghost" id="btn-bozza" type="button" title="Salva il lavoro a metà, anche con errori: lo ritrovi riaprendo la stessa data">Salva bozza</button>
       <button class="btn amber" id="btn-salva" type="button">Salva giornata</button>
       <button class="btn" id="btn-chiudi" type="button" title="Salva la giornata e ne apre una nuova">Chiudi giornata</button>
+      <button class="btn" id="btn-indietro" type="button" title="Esci dalla giornata riaperta e torna all'archivio">&larr; Torna indietro</button>
     </div>
     <section class="view" id="v-lav"></section>
     <section class="view" id="v-archivio"></section>
@@ -593,7 +594,9 @@ function aggiornaStato() {
   else if (!CUR.data) { s.className = 'stato mod'; s.textContent = 'Inserisci la data produzione'; }
   else { s.className = 'stato new'; s.textContent = 'Nuova giornata'; }
   $('g-data').value = CUR.data;
-  ['btn-bozza', 'btn-salva', 'btn-chiudi'].forEach(id => { $(id).hidden = !CUR.data; });   // i tasti compaiono solo con una giornata aperta
+  ['btn-bozza', 'btn-salva'].forEach(id => { $(id).hidden = !CUR.data; });   // i tasti compaiono solo con una giornata aperta
+  $('btn-chiudi').hidden = !CUR.data || !!CUR.riaperta;                      // giornata nuova → Chiudi giornata
+  $('btn-indietro').hidden = !CUR.data || !CUR.riaperta;                     // giornata già salvata e riaperta → Torna indietro
 }
 function oraBozza(ts) { const t = new Date(ts); return 'il ' + String(t.getDate()).padStart(2, '0') + '/' + String(t.getMonth() + 1).padStart(2, '0') + ' alle ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0'); }
 async function salvaBozzaClick() {
@@ -614,7 +617,7 @@ async function apriGiornata(d, { forza } = {}) {
   }
   try {
     const [dati, bz] = await Promise.all([DB.leggi(d), DB.bozza(d)]);
-    CUR = dati ? { data: d, dati: completaRighe(JSON.parse(JSON.stringify(dati))), salvata: true, dirty: false } : giornataVuota(d);
+    CUR = dati ? { data: d, dati: completaRighe(JSON.parse(JSON.stringify(dati))), salvata: true, dirty: false, riaperta: true } : giornataVuota(d);
     if (dati) CACHE_DATI[d] = dati;
     if (bz) { CUR.dati = completaRighe(JSON.parse(JSON.stringify(bz.dati))); CUR.bozza = oraBozza(bz.aggiornato_il); setTimeout(() => toast('Ho aperto la bozza del ' + isoToIt(d) + ' (' + CUR.bozza + ')'), 50); }
   } catch (e) { toast('Errore nel caricamento: ' + e.message, true); return; }
@@ -669,6 +672,14 @@ $('btn-chiudi').addEventListener('click', async () => {
   CUR = giornataVuota(''); togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = ''); aggiornaStato(); vai('grattugiato');
   apriModal(`<h2>Giornata del ${isoToIt(d)} chiusa</h2><p>È salvata in <b>Archivio giornalieri</b>, da dove puoi riaprirla, cambiarne la data o esportare l'Excel per il consorzio.</p><p>Per la prossima giornata inserisci in alto la <b>Data produzione</b>.</p>
     <div class="modal-btns"><button class="btn amber" data-close>OK</button></div>`);
+});
+$('btn-indietro').addEventListener('click', () => {
+  const esci = () => { CUR = giornataVuota(''); togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = ''); aggiornaStato(); vai('archivio'); };
+  if (!CUR.dirty) { esci(); return; }
+  apriModal(`<h2>Modifiche non salvate</h2><p>Hai modificato la giornata del <b>${isoToIt(CUR.data)}</b>. Cosa vuoi fare prima di tornare indietro?</p>
+    <div class="modal-btns"><button class="btn ghost" data-close>Annulla</button><button class="btn ghost" id="ind-no">Esci senza salvare</button><button class="btn amber" id="ind-si">Salva ed esci</button></div>`);
+  $('ind-no').onclick = () => { chiudiModal(); esci(); };
+  $('ind-si').onclick = async () => { chiudiModal(); if (await salvaGiornata()) esci(); };
 });
 function mostraErrori(errs, titolo) {
   apriModal(`<h2>${esc(titolo)}</h2><p>Clicca su una riga per andare al campo.</p><ul class="errlist">${errs.slice(0, 200).map((e, j) =>
