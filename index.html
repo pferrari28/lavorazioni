@@ -35,7 +35,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:"Barlow","Segoe 
 .main-area{flex:1 1 auto;min-width:0;padding:0 24px 60px;}
 .daybar{position:sticky;top:0;z-index:20;background:var(--bg);padding:14px 0 12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:16px;}
 .daybar label{font-weight:600;}
-.daybar input[type=date]{font:inherit;font-size:1.05rem;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font-weight:600;}
+.daybar input[type=date]{font:inherit;font-size:1.1rem;padding:7px 10px;border:2px solid var(--amber);border-radius:6px;background:var(--panel);color:var(--ink);font-weight:600;}
 .stato{font-size:.85rem;padding:5px 10px;border-radius:20px;font-weight:600;}
 .stato.ok{background:var(--ok-bg);color:var(--ok);}
 .stato.mod{background:var(--warn-bg);color:var(--warn);}
@@ -163,7 +163,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
   </aside>
   <main class="main-area">
     <div class="daybar" id="daybar">
-      <label for="g-data">Giornata del</label>
+      <label for="g-data">Data produzione</label>
       <input type="date" id="g-data">
       <span id="g-stato" class="stato new">Nuova</span>
       <span class="spacer"></span>
@@ -606,6 +606,10 @@ async function salvaGiornata() {
   finally { b.disabled = false; }
 }
 $('btn-salva').addEventListener('click', salvaGiornata);
+function giornoLavorativoPrima(iso) {
+  const d = new Date(iso + 'T12:00'); do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 function giornoLavorativoDopo(iso) {
   const d = new Date(iso + 'T12:00'); do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -614,7 +618,7 @@ $('btn-chiudi').addEventListener('click', async () => {
   if (CUR.dirty || !CUR.salvata) { if (!(await salvaGiornata())) return; }
   const prop = giornoLavorativoDopo(CUR.data);
   apriModal(`<h2>Giornata del ${isoToIt(CUR.data)} chiusa</h2><p>È salvata in <b>Archivio giornalieri</b>, da dove puoi riaprirla o esportare l'Excel per il consorzio.</p>
-    <p>Data della nuova giornata: <input type="date" id="nuova-data" value="${prop}" style="font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px"></p>
+    <p>Data produzione della nuova giornata: <input type="date" id="nuova-data" value="${prop}" style="font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px"></p>
     <div class="modal-btns"><button class="btn ghost" data-close>Resta qui</button><button class="btn amber" id="apri-nuova">Apri nuova giornata</button></div>`);
   $('apri-nuova').onclick = () => { const d = $('nuova-data').value; if (!d) return; chiudiModal(); PAGE = 'grattugiato'; apriGiornata(d); };
 });
@@ -1189,7 +1193,7 @@ async function avvia() {
     CUR = { data: bz.data, dati: completaRighe(bz.dati), salvata: !!bz.salvata, dirty: true };
     aggiornaStato(); vai('grattugiato');
     toast('Ho recuperato le modifiche non salvate della giornata del ' + isoToIt(bz.data));
-  } else await apriGiornata(isoOggi(), { forza: true });
+  } else await apriGiornata(giornoLavorativoPrima(isoOggi()), { forza: true });
 }
 if (DEMO) avvia();
 else {
