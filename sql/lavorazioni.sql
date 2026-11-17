@@ -28,3 +28,20 @@ create policy lav_giornate_paolo on public.lav_giornate
 
 revoke all on public.lav_giornate from anon;
 grant select, insert, update, delete on public.lav_giornate to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Matricole (pagina Matricole del sito) — 17/11/2026
+-- (le 132 matricole iniziali sono state caricate direttamente)
+-- ---------------------------------------------------------------------
+create table if not exists public.lav_matricole (
+  matricola text primary key,
+  creata_il timestamptz not null default now()
+);
+alter table public.lav_matricole enable row level security;
+drop policy if exists lav_matricole_paolo on public.lav_matricole;
+create policy lav_matricole_paolo on public.lav_matricole
+  for all to authenticated
+  using (lower(coalesce((select auth.jwt()) ->> 'email', '')) = 'admin@lotti.local')
+  with check (lower(coalesce((select auth.jwt()) ->> 'email', '')) = 'admin@lotti.local');
+revoke all on public.lav_matricole from anon;
+grant select, insert, update, delete on public.lav_matricole to authenticated;
