@@ -1171,8 +1171,8 @@ function compilaFoglio(k, D, iso) {
       if ((L.tipo === 'A' && c.col === 'G') || (L.tipo === 'B' && c.col === 'F')) return cellaXml(ref, c.s, dataT ? { s: dataT } : null);
       if (L.tipo === 'A' && c.col === 'L') return cellaXml(ref, c.s, D.linea ? { s: D.linea } : null);
       if (L.tipo === 'A' && c.col === 'Q') return `<c r="Q4"${c.s ? ` s="${c.s}"` : ''}><f>G${ultimo + 1}+I${ultimo + 1}-K${ultimo + 1}-Q${ultimo + 1}-R${ultimo + 1}-S${ultimo + 1}</f><v>${Math.round(residuoA(D.righe) * 1000) / 1000}</v></c>`;
-      if (c.col === 'C' && c.inner && c.inner.includes('<f>')) return `<c r="${ref}"${c.s ? ` s="${c.s}"` : ''} t="str">${c.inner.replace(/<v>[^<]*<\/v>/, '')}<v>${xmlEsc(dataT || ' ')}</v></c>`;
-      if (c.inner && c.inner.includes('<f>')) return `<c r="${ref}"${c.attrs}>${c.inner.replace(/<v>[^<]*<\/v>/, '')}</c>`;
+      if (c.col === 'C' && c.inner && c.inner.includes('<f>')) return `<c r="${ref}"${c.s ? ` s="${c.s}"` : ''} t="str">${c.inner.replace(/<v[^>]*>[^<]*<\/v>/g, '')}<v>${xmlEsc(dataT || ' ')}</v></c>`;
+      if (c.inner && c.inner.includes('<f>')) return `<c r="${ref}"${c.attrs}>${c.inner.replace(/<v[^>]*>[^<]*<\/v>/g, '')}</c>`;
       return `<c r="${ref}"${c.attrs}${c.inner != null ? '>' + c.inner + '</c>' : '/>'}`;
     });
     out.push(`<row r="4"${R.attrs}>${celle.join('')}</row>`);
