@@ -563,6 +563,7 @@ function aggiornaStato() {
   const s = $('g-stato');
   if (CUR.dirty) { s.className = 'stato mod'; s.textContent = 'Modifiche non salvate'; }
   else if (CUR.salvata) { s.className = 'stato ok'; s.textContent = 'Salvata'; }
+  else if (!CUR.data) { s.className = 'stato mod'; s.textContent = 'Inserisci la data produzione'; }
   else { s.className = 'stato new'; s.textContent = 'Nuova giornata'; }
   $('g-data').value = CUR.data;
 }
@@ -582,9 +583,14 @@ async function apriGiornata(d, { forza } = {}) {
   if (!LAV[PAGE]) PAGE = 'grattugiato';
   vai(PAGE);
 }
-$('g-data').addEventListener('change', e => { if (e.target.value) apriGiornata(e.target.value); });
+$('g-data').addEventListener('change', e => {
+  if (e.target.value) apriGiornata(e.target.value);
+  else if (CUR.data) e.target.value = CUR.data;   // la data di una giornata aperta non si può svuotare
+});
 
+function serveData() { if (CUR.data) return false; toast('Inserisci prima la data produzione', true); $('g-data').focus(); return true; }
 async function salvaGiornata() {
+  if (serveData()) return false;
   const errs = errori(CUR);
   if (errs.length) { mostraErrori(errs, 'Non posso salvare: ci sono campi da correggere'); return false; }
   const dati = datiDaSalvare(CUR.dati), tot = calcolaTotali(dati);
@@ -615,14 +621,15 @@ function giornoLavorativoDopo(iso) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 $('btn-chiudi').addEventListener('click', async () => {
+  if (serveData()) return;
   if (CUR.dirty || !CUR.salvata) { if (!(await salvaGiornata())) return; }
-  const prop = giornoLavorativoDopo(CUR.data);
-  apriModal(`<h2>Giornata del ${isoToIt(CUR.data)} chiusa</h2><p>È salvata in <b>Archivio giornalieri</b>, da dove puoi riaprirla o esportare l'Excel per il consorzio.</p>
-    <p>Data produzione della nuova giornata: <input type="date" id="nuova-data" value="${prop}" style="font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px"></p>
-    <div class="modal-btns"><button class="btn ghost" data-close>Resta qui</button><button class="btn amber" id="apri-nuova">Apri nuova giornata</button></div>`);
-  $('apri-nuova').onclick = () => { const d = $('nuova-data').value; if (!d) return; chiudiModal(); PAGE = 'grattugiato'; apriGiornata(d); };
+  const d = CUR.data;
+  CUR = giornataVuota(''); togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = ''); aggiornaStato(); vai('grattugiato');
+  apriModal(`<h2>Giornata del ${isoToIt(d)} chiusa</h2><p>È salvata in <b>Archivio giornalieri</b>, da dove puoi riaprirla, cambiarne la data o esportare l'Excel per il consorzio.</p><p>Per la prossima giornata inserisci in alto la <b>Data produzione</b>.</p>
+    <div class="modal-btns"><button class="btn amber" data-close>OK</button></div>`);
 });
 $('btn-xls').addEventListener('click', async () => {
+  if (serveData()) return;
   const errs = errori(CUR);
   if (errs.length) { mostraErrori(errs, 'Prima di esportare correggi questi campi'); return; }
   if (CUR.dirty) {
@@ -645,6 +652,11 @@ function mostraErrori(errs, titolo) {
 
 // ---------- pagine di compilazione ----------
 function renderLav() {
+  if (!CUR.data) {
+    $('v-lav').innerHTML = `<div class="page-title"><h2>${LAV[PAGE].nome.toUpperCase()}</h2></div><div class="panel"><div class="empty" style="font-size:1.05rem">Per iniziare inserisci in alto la <b>Data produzione</b> delle schede che devi registrare.</div></div>`;
+    setTimeout(() => { try { $('g-data').focus(); } catch (e) {} }, 0);
+    return;
+  }
   const key = PAGE, L = LAV[key], D = CUR.dati[key], cols = colonne(key);
   const nMP = cols.findIndex(c => c.sep);
   const head1 = `<tr class="g"><th rowspan="2">N°</th><th colspan="${nMP}">MATERIA PRIMA</th><th class="sepcol" rowspan="2"></th><th colspan="${cols.length - nMP - 1}">PRODOTTO IN USCITA</th></tr>`;
@@ -803,13 +815,36 @@ async function renderArchivio() {
     ${lst.map(x => `<tr><td><b>${isoToIt(x.data)}</b> <span style="color:var(--muted)">${GIORNI[new Date(x.data + 'T12:00').getDay()]}</span>${CUR && CUR.data === x.data ? ' <span class="stato ' + (CUR.dirty ? 'mod' : 'ok') + '">aperta</span>' : ''}</td>
       ${KEYS.map(k => `<td class="r">${(x.totali[k] || {}).righe || ''}</td>`).join('')}
       <td class="r">${fmtKg2(somma(x, 'introdotta'))}</td><td class="r">${fmtKg2(somma(x, 'prodotto'))}</td>
-      <td><div class="act"><button class="btn sm" data-apri="${x.data}">Apri</button><button class="btn ghost sm" data-xls="${x.data}" title="File giornaliero con tutte le 5 pagine compilate">Esporta Excel giornaliero</button><button class="btn ghost sm" data-del="${x.data}" title="Elimina giornata">Elimina</button></div></td></tr>`).join('')}
+      <td><div class="act"><button class="btn sm" data-apri="${x.data}">Apri</button><button class="btn ghost sm" data-xls="${x.data}" title="File giornaliero con tutte le 5 pagine compilate">Esporta Excel giornaliero</button><button class="btn ghost sm" data-mod="${x.data}" title="Cambia la data di produzione di questa giornata">Modifica data</button><button class="btn ghost sm" data-del="${x.data}" title="Elimina giornata">Elimina</button></div></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">Nessuna giornata salvata.</div>'}</div>`;
   $('arch-mese').addEventListener('change', e => { ARCH_MESE = e.target.value; renderArchivio(); });
   v.querySelector('.panel').addEventListener('click', async e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.apri) { PAGE = 'grattugiato'; await apriGiornata(b.dataset.apri); }
     else if (b.dataset.xls) { const d = b.dataset.xls; try { const dati = CACHE_DATI[d] || await DB.leggi(d); CACHE_DATI[d] = dati; esportaGiornaliero(d, dati); } catch (x) { toast('Errore: ' + x.message, true); } }
+    else if (b.dataset.mod) {
+      const d = b.dataset.mod;
+      apriModal(`<h2>Modifica data produzione</h2><p>Giornata attuale: <b>${isoToIt(d)}</b>. Tutte le schede delle 5 lavorazioni passano alla nuova data (anche il lotto del prodotto finito e la DATA delle pagine).</p>
+        <p>Nuova data: <input type="date" id="mod-data" style="font:inherit;font-size:1.05rem;padding:6px 9px;border:2px solid var(--amber);border-radius:6px"></p><p class="err" id="mod-err" style="color:var(--danger);font-weight:600"></p>
+        <div class="modal-btns"><button class="btn ghost" data-close>Annulla</button><button class="btn amber" id="mod-ok">Cambia data</button></div>`);
+      $('mod-ok').onclick = async () => {
+        const n = $('mod-data').value;
+        if (!n) { $('mod-err').textContent = 'Inserisci la nuova data.'; return; }
+        if (n === d) { chiudiModal(); return; }
+        if (ARCH.some(x => x.data === n)) { $('mod-err').textContent = 'Esiste già una giornata salvata il ' + isoToIt(n) + ': eliminala o cambiale data prima.'; return; }
+        if (CUR.data === d && CUR.dirty) { $('mod-err').textContent = 'Questa giornata è aperta con modifiche non salvate: salvala prima.'; return; }
+        $('mod-ok').disabled = true;
+        try {
+          const dati = CACHE_DATI[d] || await DB.leggi(d);
+          await DB.salva(n, dati, calcolaTotali(completaRighe(JSON.parse(JSON.stringify(dati)))));
+          await DB.elimina(d);
+          const rec = ARCH.find(x => x.data === d); rec.data = n; ARCH.sort((a, c) => c.data.localeCompare(a.data));
+          CACHE_DATI[n] = dati; delete CACHE_DATI[d];
+          if (CUR.data === d) { CUR.data = n; aggiornaStato(); }
+          chiudiModal(); toast('Giornata spostata dal ' + isoToIt(d) + ' al ' + isoToIt(n)); renderArchivio();
+        } catch (x) { $('mod-ok').disabled = false; $('mod-err').textContent = 'Errore: ' + x.message; }
+      };
+    }
     else if (b.dataset.del) {
       const d = b.dataset.del;
       const ok = await chiedi('Eliminare la giornata?', `La giornata del <b>${isoToIt(d)}</b> verrà eliminata con tutte le righe delle 5 lavorazioni e sparirà anche dal riepilogo.`, 'Elimina', 'Annulla', true);
@@ -1193,7 +1228,7 @@ async function avvia() {
     CUR = { data: bz.data, dati: completaRighe(bz.dati), salvata: !!bz.salvata, dirty: true };
     aggiornaStato(); vai('grattugiato');
     toast('Ho recuperato le modifiche non salvate della giornata del ' + isoToIt(bz.data));
-  } else await apriGiornata(giornoLavorativoPrima(isoOggi()), { forza: true });
+  } else { CUR = giornataVuota(''); aggiornaStato(); vai('grattugiato'); }
 }
 if (DEMO) avvia();
 else {
