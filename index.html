@@ -172,6 +172,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
       <button class="btn ghost" id="btn-bozza" type="button" title="Salva il lavoro a metà, anche con errori: lo ritrovi riaprendo la stessa data">Salva bozza</button>
       <button class="btn amber" id="btn-salva" type="button">Salva giornata</button>
       <button class="btn" id="btn-chiudi" type="button" title="Salva la giornata e ne apre una nuova">Chiudi giornata</button>
+      <button class="btn ghost" id="btn-annulla" type="button" title="Esci dalla giornata nuova senza salvare">Annulla</button>
       <button class="btn" id="btn-indietro" type="button" title="Esci dalla giornata riaperta e torna all'archivio">&larr; Torna indietro</button>
     </div>
     <section class="view" id="v-lav"></section>
@@ -424,6 +425,19 @@ const DB = {
     if (DEMO) { const l = (await DB.matricole()).filter(x => x !== m); try { localStorage.setItem('lav_demo_matr', JSON.stringify(l)); } catch (e) {} return; }
     const { error } = await sb.from('lav_matricole').delete().eq('matricola', m); if (error) throw error;
   },
+  async backup() {
+    if (DEMO) {
+      const o = demoLoad(); let bz = {}, mt = null;
+      try { bz = JSON.parse(localStorage.getItem('lav_demo_bozze') || '{}'); mt = JSON.parse(localStorage.getItem('lav_demo_matr') || 'null'); } catch (e) {}
+      return { giornate: Object.keys(o).sort().map(d => ({ data: d, dati: o[d].dati, totali: o[d].totali })), bozze: Object.keys(bz).sort().map(d => ({ data: d, dati: bz[d].dati, aggiornato_il: bz[d].aggiornato_il })), matricole: mt || MATRICOLE_INIZIALI };
+    }
+    const [g, b, m] = await Promise.all([
+      sb.from('lav_giornate').select('data,dati,totali,aggiornato_il').order('data'),
+      sb.from('lav_bozze').select('data,dati,aggiornato_il').order('data'),
+      sb.from('lav_matricole').select('matricola')]);
+    for (const r of [g, b, m]) if (r.error) throw r.error;
+    return { giornate: g.data, bozze: b.data, matricole: m.data.map(x => x.matricola) };
+  },
   async elimina(d) {
     if (DEMO) { const o = demoLoad(); delete o[d]; demoSave(o); return; }
     const { error } = await sb.from('lav_giornate').delete().eq('data', d);
@@ -596,7 +610,8 @@ function aggiornaStato() {
   $('g-data').value = CUR.data;
   ['btn-bozza', 'btn-salva'].forEach(id => { $(id).hidden = !CUR.data; });   // i tasti compaiono solo con una giornata aperta
   $('btn-chiudi').hidden = !CUR.data || !!CUR.riaperta;                      // giornata nuova → Chiudi giornata
-  $('btn-indietro').hidden = !CUR.data || !CUR.riaperta;                     // giornata già salvata e riaperta → Torna indietro
+  $('btn-indietro').hidden = !CUR.data || !CUR.riaperta;
+  $('btn-annulla').hidden = !CUR.data || !!CUR.riaperta;                     // giornata già salvata e riaperta → Torna indietro
 }
 function oraBozza(ts) { const t = new Date(ts); return 'il ' + String(t.getDate()).padStart(2, '0') + '/' + String(t.getMonth() + 1).padStart(2, '0') + ' alle ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0'); }
 async function salvaBozzaClick() {
@@ -672,6 +687,15 @@ $('btn-chiudi').addEventListener('click', async () => {
   CUR = giornataVuota(''); togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = ''); aggiornaStato(); vai('grattugiato');
   apriModal(`<h2>Giornata del ${isoToIt(d)} chiusa</h2><p>È salvata in <b>Archivio giornalieri</b>, da dove puoi riaprirla, cambiarne la data o esportare l'Excel per il consorzio.</p><p>Per la prossima giornata inserisci in alto la <b>Data produzione</b>.</p>
     <div class="modal-btns"><button class="btn amber" data-close>OK</button></div>`);
+});
+$('btn-annulla').addEventListener('click', async () => {
+  const d = CUR.data;
+  if (CUR.dirty) {
+    const ok = await chiedi('Annullare la giornata?', `Le modifiche non salvate della giornata del <b>${isoToIt(d)}</b> andranno perse.${CUR.bozza ? ' La bozza salvata ' + CUR.bozza + ' resta disponibile.' : ''}`, 'Annulla giornata', 'Continua a compilare', true);
+    if (!ok) return;
+  }
+  CUR = giornataVuota(''); togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = ''); aggiornaStato(); vai('grattugiato');
+  toast('Giornata del ' + isoToIt(d) + ' annullata');
 });
 $('btn-indietro').addEventListener('click', () => {
   const esci = () => { CUR = giornataVuota(''); togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = ''); aggiornaStato(); vai('archivio'); };
@@ -863,7 +887,7 @@ async function renderArchivio() {
   if (ARCH_MESE && !mesi.includes(ARCH_MESE)) ARCH_MESE = '';
   const lst = a.filter(x => !ARCH_MESE || meseKey(x.data) === ARCH_MESE);
   const somma = (x, f) => KEYS.reduce((s, k) => s + ((x.totali[k] || {})[f] || 0), 0);
-  v.innerHTML = `<div class="page-title"><h2>Archivio giornalieri</h2><span class="info">${a.length} giornate salvate</span></div>
+  v.innerHTML = `<div class="page-title"><h2>Archivio giornalieri</h2><span class="info">${a.length} giornate salvate</span><span style="flex:1"></span><button class="btn ghost" id="btn-backup" type="button" title="Scarica un file con tutte le giornate, le bozze e le matricole">Esporta backup</button></div>
     <div class="toolbar"><select id="arch-mese"><option value="">Tutti i mesi</option>${mesi.map(m => `<option value="${m}"${m === ARCH_MESE ? ' selected' : ''}>${meseLabel(m)}</option>`).join('')}</select></div>
     <div class="panel" style="padding:0">${lst.length ? `<div class="list-wrap"><table class="list" style="width:100%"><thead><tr><th>Giornata</th>${KEYS.map(k => `<th class="r">${LAV[k].nome}<br>righe</th>`).join('')}<th class="r">Kg introdotti</th><th class="r">Kg prodotto finito</th><th></th></tr></thead><tbody>
     ${lst.map(x => `<tr><td><b>${isoToIt(x.data)}</b> <span style="color:var(--muted)">${GIORNI[new Date(x.data + 'T12:00').getDay()]}</span>${CUR && CUR.data === x.data ? ' <span class="stato ' + (CUR.dirty ? 'mod' : 'ok') + '">aperta</span>' : ''}</td>
@@ -872,6 +896,7 @@ async function renderArchivio() {
       <td><div class="act"><button class="btn sm" data-apri="${x.data}">Apri</button><button class="btn ghost sm" data-xls="${x.data}" title="File giornaliero con tutte le 5 pagine compilate">Esporta Excel giornaliero</button><button class="btn ghost sm" data-mod="${x.data}" title="Cambia la data di produzione di questa giornata">Modifica data</button><button class="btn ghost sm" data-del="${x.data}" title="Elimina giornata">Elimina</button></div></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">Nessuna giornata salvata.</div>'}</div>`;
   $('arch-mese').addEventListener('change', e => { ARCH_MESE = e.target.value; renderArchivio(); });
+  $('btn-backup').addEventListener('click', esportaBackup);
   try { if (!BOZZE) BOZZE = await DB.elencoBozze(); } catch (e) { BOZZE = []; }
   if (BOZZE.length) {
     const p = document.createElement('div'); p.className = 'panel';
@@ -958,6 +983,18 @@ function disegnaMatr() {
   $('mt-info').textContent = q ? lst.length + ' trovate' : '';
   $('mt-list').innerHTML = lst.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">${lst.map(m =>
     `<div style="display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:6px;padding:6px 6px 6px 12px;font-weight:600;font-variant-numeric:tabular-nums">${esc(m)}<button class="btn ghost sm" data-delm="${esc(m)}" title="Elimina" style="padding:2px 8px">×</button></div>`).join('')}</div>` : '<div class="empty">Nessuna matricola.</div>';
+}
+
+async function esportaBackup() {
+  const b = $('btn-backup'); b.disabled = true;
+  try {
+    const dati = await DB.backup();
+    const out = { tipo: 'backup-lavorazioni', creato_il: new Date().toISOString(), ...dati };
+    const oggi = isoToIt(isoOggi()).replace(/-/g, '.');
+    scarica(new Blob([JSON.stringify(out)], { type: 'application/json' }), 'Backup lavorazioni ' + oggi + '.json');
+    toast(`Backup creato: ${dati.giornate.length} giornate, ${dati.bozze.length} bozze, ${dati.matricole.length} matricole`);
+  } catch (e) { toast('Errore nel backup: ' + e.message, true); }
+  finally { b.disabled = false; }
 }
 
 // ---------- riepilogo ----------
