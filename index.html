@@ -1046,7 +1046,7 @@ function esportaGiornaliero(iso, dati) {
   files['xl/workbook.xml'] = wb;
   const ord = ['[Content_Types].xml', '_rels/.rels'];
   const lista = ord.map(n => [n, files[n]]).concat(Object.keys(files).filter(n => !ord.includes(n)).map(n => [n, files[n]]));
-  scarica(creaZip(lista), 'GIORNALIERO ' + isoToIt(iso) + '.xlsx');
+  scarica(creaZip(lista), isoToIt(iso).replace(/-/g, '.') + '.xlsx');
   toast('File Excel della giornata ' + isoToIt(iso) + ' creato');
 }
 function nRigheExcel(k, D) {
