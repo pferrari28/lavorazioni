@@ -747,7 +747,7 @@ function rigaHTML(key, cols, r, i) {
     if (c.sep) return '<td class="sepcol"></td>';
     if (c.calc) return `<td class="calc" data-i="${i}" data-f="${c.calc}"></td>`;
     if (c.t === 'chk') return `<td class="chk ${c.g}" data-i="${i}" data-f="${c.k}" title="Clicca per segnare i piatti">${r[c.k] ? 'X' : ''}</td>`;
-    const cls = [c.g, NUM_T.has(c.t) ? 'r' : '', ['mese', 'anno', 'data', 'rif', 'orig'].includes(c.t) ? 'c' : '', ['lotto', 'matr', 'text'].includes(c.t) && c.k !== 'note' ? 'up' : ''].join(' ');
+    const cls = [c.g, NUM_T.has(c.t) ? 'r' : '', ['mese', 'anno', 'data', 'rif', 'orig'].includes(c.t) ? 'c' : '', ['lotto', 'matr'].includes(c.t) ? 'up' : ''].join(' ');
     const mode = (c.t === 'int' || c.t === 'mese' || c.t === 'anno') ? ' inputmode="numeric"' : c.t === 'kg' ? ' inputmode="decimal"' : '';
     return `<td class="${cls}" data-i="${i}" data-f="${c.k}"><input data-t="${c.t}" value="${esc(mostra(c.t, r[c.k]))}"${mode} autocomplete="off" spellcheck="false"></td>`;
   }).join('') + '</tr>';
@@ -757,7 +757,6 @@ function onCella(e) {
   const td = inp.closest('td'), i = +td.dataset.i, f = td.dataset.f, t = inp.dataset.t;
   const r = CUR.dati[PAGE].righe[i];
   let v = normalizza(t, inp.value);
-  if (f === 'marchio') v = String(v).toUpperCase();
   if (vuoto(v)) delete r[f]; else r[f] = v;
   inp.value = mostra(t, v);
   segnaModifica(); aggiornaControlli();
