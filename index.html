@@ -302,7 +302,7 @@ function parseGiornoMese(s) {
   if (d > new Date(2024, m, 0).getDate()) return null;
   return d + '-' + MESI[m - 1];
 }
-const RE_LOTTO_P = /^\d{2}P\d+$/;
+const RE_LOTTO_P = /^(\d{2})?P\d+$/;          // 26P123 oppure P1792 (lotti prima del 2026)
 const RE_LOTTO_EST = /^\d{2}\/\d+$/;
 const PAROLE_LOTTO = ['RESIDUO', 'INTERNO', 'ESTERNO'];
 
@@ -448,7 +448,7 @@ function controllaRiga(key, righe, i) {
   if (!vuoto(r.anno) && !(n(r.anno) && r.anno >= 2000 && r.anno <= 2099)) E.anno = 'Anno: scrivi 2 cifre (24 → 2024)';
   const parole = L.tipo === 'A' ? PAROLE_LOTTO : ['RESIDUO', 'INTERNO'];
   if (!vuoto(r.lotto) && !(RE_LOTTO_P.test(r.lotto) || parole.includes(r.lotto)))
-    E.lotto = 'Lotto: formato 26P123 oppure ' + parole.join(', ');
+    E.lotto = 'Lotto: formato 26P123 o P1792 oppure ' + parole.join(', ');
   if (!vuoto(r.matr) && !MATRICOLE.has(normMatr(r.matr))) R.matr = 'Matricola non presente nella pagina Matricole';
   // materia prima
   const mp = MP_KEYS.some(k => k !== 'piatti' && !vuoto(r[k]));
