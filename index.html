@@ -169,7 +169,6 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
       <input type="date" id="g-data">
       <span id="g-stato" class="stato new">Nuova</span>
       <span class="spacer"></span>
-      <button class="btn ghost" id="btn-xls" type="button">Esporta Excel giornaliero</button>
       <button class="btn ghost" id="btn-bozza" type="button" title="Salva il lavoro a metà, anche con errori: lo ritrovi riaprendo la stessa data">Salva bozza</button>
       <button class="btn amber" id="btn-salva" type="button">Salva giornata</button>
       <button class="btn" id="btn-chiudi" type="button" title="Salva la giornata e ne apre una nuova">Chiudi giornata</button>
@@ -594,6 +593,7 @@ function aggiornaStato() {
   else if (!CUR.data) { s.className = 'stato mod'; s.textContent = 'Inserisci la data produzione'; }
   else { s.className = 'stato new'; s.textContent = 'Nuova giornata'; }
   $('g-data').value = CUR.data;
+  ['btn-bozza', 'btn-salva', 'btn-chiudi'].forEach(id => { $(id).hidden = !CUR.data; });   // i tasti compaiono solo con una giornata aperta
 }
 function oraBozza(ts) { const t = new Date(ts); return 'il ' + String(t.getDate()).padStart(2, '0') + '/' + String(t.getMonth() + 1).padStart(2, '0') + ' alle ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0'); }
 async function salvaBozzaClick() {
@@ -669,16 +669,6 @@ $('btn-chiudi').addEventListener('click', async () => {
   CUR = giornataVuota(''); togliBozza(); Object.keys(SEARCH).forEach(k => SEARCH[k] = ''); aggiornaStato(); vai('grattugiato');
   apriModal(`<h2>Giornata del ${isoToIt(d)} chiusa</h2><p>È salvata in <b>Archivio giornalieri</b>, da dove puoi riaprirla, cambiarne la data o esportare l'Excel per il consorzio.</p><p>Per la prossima giornata inserisci in alto la <b>Data produzione</b>.</p>
     <div class="modal-btns"><button class="btn amber" data-close>OK</button></div>`);
-});
-$('btn-xls').addEventListener('click', async () => {
-  if (serveData()) return;
-  const errs = errori(CUR);
-  if (errs.length) { mostraErrori(errs, 'Prima di esportare correggi questi campi'); return; }
-  if (CUR.dirty || CUR.bozza || !CUR.salvata) {
-    const ok = await chiedi('Salvare prima di esportare?', 'Ci sono modifiche non salvate. Salvo la giornata e poi creo il file Excel?', 'Salva ed esporta', 'Annulla');
-    if (!ok || !(await salvaGiornata())) return;
-  }
-  esportaGiornaliero(CUR.data, datiDaSalvare(CUR.dati));
 });
 function mostraErrori(errs, titolo) {
   apriModal(`<h2>${esc(titolo)}</h2><p>Clicca su una riga per andare al campo.</p><ul class="errlist">${errs.slice(0, 200).map((e, j) =>
