@@ -308,7 +308,9 @@ function parseGiornoMese(s) {
 }
 const RE_LOTTO_P = /^(\d{2})?P\d+$/;          // 26P123 oppure P1792 (lotti prima del 2026)
 const RE_LOTTO_EST = /^\d{2}\/\d+$/;
-const PAROLE_LOTTO = ['RESIDUO', 'INTERNO', 'ESTERNO'];
+const PAROLE_LOTTO = ['RESIDUO', 'INTERNO', 'ESTERNO', 'RIAPERTURA'];
+const SENZA_MATRICOLA = ['RESIDUO', 'INTERNO', 'RIAPERTURA'];
+const normMarchio = v => String(v).toUpperCase().replace(/(\d)\s?G\b/g, '$1g');   // tutto maiuscolo, i grammi con la g minuscola
 
 // normalizza il valore scritto in una cella; ritorna il valore da salvare
 function normalizza(t, raw) {
@@ -476,7 +478,7 @@ function controllaRiga(key, righe, i) {
   if (mp) {
     if (vuoto(r.lotto)) E.lotto = E.lotto || 'Lotto obbligatorio';
   }
-  if (!vuoto(r.lotto) && !['RESIDUO', 'INTERNO'].includes(r.lotto)) {     // con il lotto servono matricola, mese e anno
+  if (!vuoto(r.lotto) && !SENZA_MATRICOLA.includes(r.lotto)) {     // con il lotto servono matricola, mese e anno
     if (vuoto(r.matr)) E.matr = 'Matricola obbligatoria';
     if (vuoto(r.mese)) E.mese = E.mese || 'Mese obbligatorio';
     if (vuoto(r.anno)) E.anno = E.anno || 'Anno obbligatorio';
@@ -757,6 +759,7 @@ function onCella(e) {
   const td = inp.closest('td'), i = +td.dataset.i, f = td.dataset.f, t = inp.dataset.t;
   const r = CUR.dati[PAGE].righe[i];
   let v = normalizza(t, inp.value);
+  if (f === 'marchio' && !vuoto(v)) v = normMarchio(v);
   if (vuoto(v)) delete r[f]; else r[f] = v;
   inp.value = mostra(t, v);
   segnaModifica(); aggiornaControlli();
