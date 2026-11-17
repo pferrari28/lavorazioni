@@ -438,6 +438,31 @@ const DB = {
     for (const r of [g, b, m]) if (r.error) throw r.error;
     return { giornate: g.data, bozze: b.data, matricole: m.data.map(x => x.matricola) };
   },
+  async ripristina(b, sostituisci) {
+    // b = { giornate:[{data,dati,totali}], bozze:[{data,dati,aggiornato_il}], matricole:[...] }
+    if (DEMO) {
+      const o = sostituisci ? {} : demoLoad();
+      b.giornate.forEach(g => { if (sostituisci || !o[g.data]) o[g.data] = { dati: g.dati, totali: g.totali }; }); demoSave(o);
+      let bz = {}; try { if (!sostituisci) bz = JSON.parse(localStorage.getItem('lav_demo_bozze') || '{}'); } catch (e) {}
+      b.bozze.forEach(x => { if (sostituisci || !bz[x.data]) bz[x.data] = { dati: x.dati, aggiornato_il: x.aggiornato_il }; });
+      let mt = sostituisci ? [] : await DB.matricole(); mt = [...new Set([...mt, ...b.matricole])];
+      try { localStorage.setItem('lav_demo_bozze', JSON.stringify(bz)); localStorage.setItem('lav_demo_matr', JSON.stringify(mt)); } catch (e) {}
+      return;
+    }
+    const blocchi = (arr, n = 50) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+    const ok = r => { if (r.error) throw r.error; };
+    if (sostituisci) {
+      ok(await sb.from('lav_giornate').delete().gte('data', '1900-01-01'));
+      ok(await sb.from('lav_bozze').delete().gte('data', '1900-01-01'));
+      ok(await sb.from('lav_matricole').delete().neq('matricola', ''));
+    }
+    for (const c of blocchi(b.giornate.map(g => ({ data: g.data, dati: g.dati, totali: g.totali }))))
+      ok(await sb.from('lav_giornate').upsert(c, { ignoreDuplicates: true }));
+    for (const c of blocchi(b.bozze.map(x => ({ data: x.data, dati: x.dati, aggiornato_il: x.aggiornato_il || new Date().toISOString() }))))
+      ok(await sb.from('lav_bozze').upsert(c, { ignoreDuplicates: true }));
+    for (const c of blocchi(b.matricole.map(m => ({ matricola: m })), 200))
+      ok(await sb.from('lav_matricole').upsert(c, { ignoreDuplicates: true }));
+  },
   async elimina(d) {
     if (DEMO) { const o = demoLoad(); delete o[d]; demoSave(o); return; }
     const { error } = await sb.from('lav_giornate').delete().eq('data', d);
@@ -887,7 +912,7 @@ async function renderArchivio() {
   if (ARCH_MESE && !mesi.includes(ARCH_MESE)) ARCH_MESE = '';
   const lst = a.filter(x => !ARCH_MESE || meseKey(x.data) === ARCH_MESE);
   const somma = (x, f) => KEYS.reduce((s, k) => s + ((x.totali[k] || {})[f] || 0), 0);
-  v.innerHTML = `<div class="page-title"><h2>Archivio giornalieri</h2><span class="info">${a.length} giornate salvate</span><span style="flex:1"></span><button class="btn ghost" id="btn-backup" type="button" title="Scarica un file con tutte le giornate, le bozze e le matricole">Esporta backup</button></div>
+  v.innerHTML = `<div class="page-title"><h2>Archivio giornalieri</h2><span class="info">${a.length} giornate salvate</span><span style="flex:1"></span><button class="btn ghost" id="btn-backup" type="button" title="Scarica un file con tutte le giornate, le bozze e le matricole">Esporta backup</button><button class="btn ghost" id="btn-importa" type="button" title="Ricarica nel sito un file di backup">Importa backup</button><input type="file" id="file-backup" accept=".json,application/json" hidden></div>
     <div class="toolbar"><select id="arch-mese"><option value="">Tutti i mesi</option>${mesi.map(m => `<option value="${m}"${m === ARCH_MESE ? ' selected' : ''}>${meseLabel(m)}</option>`).join('')}</select></div>
     <div class="panel" style="padding:0">${lst.length ? `<div class="list-wrap"><table class="list" style="width:100%"><thead><tr><th>Giornata</th>${KEYS.map(k => `<th class="r">${LAV[k].nome}<br>righe</th>`).join('')}<th class="r">Kg introdotti</th><th class="r">Kg prodotto finito</th><th></th></tr></thead><tbody>
     ${lst.map(x => `<tr><td><b>${isoToIt(x.data)}</b> <span style="color:var(--muted)">${GIORNI[new Date(x.data + 'T12:00').getDay()]}</span>${CUR && CUR.data === x.data ? ' <span class="stato ' + (CUR.dirty ? 'mod' : 'ok') + '">aperta</span>' : ''}</td>
@@ -897,6 +922,8 @@ async function renderArchivio() {
     </tbody></table></div>` : '<div class="empty">Nessuna giornata salvata.</div>'}</div>`;
   $('arch-mese').addEventListener('change', e => { ARCH_MESE = e.target.value; renderArchivio(); });
   $('btn-backup').addEventListener('click', esportaBackup);
+  $('btn-importa').addEventListener('click', () => { $('file-backup').value = ''; $('file-backup').click(); });
+  $('file-backup').addEventListener('change', e => { const f = e.target.files[0]; if (f) importaBackup(f); });
   try { if (!BOZZE) BOZZE = await DB.elencoBozze(); } catch (e) { BOZZE = []; }
   if (BOZZE.length) {
     const p = document.createElement('div'); p.className = 'panel';
@@ -986,7 +1013,7 @@ function disegnaMatr() {
 }
 
 async function esportaBackup() {
-  const b = $('btn-backup'); b.disabled = true;
+  const b = $('btn-backup') || {}; b.disabled = true;
   try {
     const dati = await DB.backup();
     const out = { tipo: 'backup-lavorazioni', creato_il: new Date().toISOString(), ...dati };
@@ -995,6 +1022,37 @@ async function esportaBackup() {
     toast(`Backup creato: ${dati.giornate.length} giornate, ${dati.bozze.length} bozze, ${dati.matricole.length} matricole`);
   } catch (e) { toast('Errore nel backup: ' + e.message, true); }
   finally { b.disabled = false; }
+}
+
+async function importaBackup(file) {
+  let b;
+  try { b = JSON.parse(await file.text()); } catch (e) { toast('Il file non è un backup valido', true); return; }
+  if (!b || b.tipo !== 'backup-lavorazioni' || !Array.isArray(b.giornate)) { toast('Il file non è un backup del sito Lavorazioni', true); return; }
+  b.bozze = Array.isArray(b.bozze) ? b.bozze : []; b.matricole = Array.isArray(b.matricole) ? b.matricole.map(normMatr).filter(Boolean) : [];
+  b.giornate = b.giornate.filter(g => g && /^\d{4}-\d{2}-\d{2}$/.test(g.data) && g.dati)
+    .map(g => ({ data: g.data, dati: g.dati, totali: calcolaTotali(datiDaSalvare(completaRighe(JSON.parse(JSON.stringify(g.dati))))) }));
+  let attuali = [];
+  try { attuali = (await caricaArchivio(true)).map(x => x.data); } catch (e) {}
+  const nuove = b.giornate.filter(g => !attuali.includes(g.data)).length;
+  const creato = b.creato_il ? new Date(b.creato_il).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' }) : '?';
+  apriModal(`<h2>Importa backup</h2>
+    <p>File del <b>${esc(creato)}</b>: ${b.giornate.length} giornate, ${b.bozze.length} bozze, ${b.matricole.length} matricole.<br>Nel sito ora ci sono ${attuali.length} giornate; di quelle del file, <b>${nuove}</b> non ci sono ancora.</p>
+    <label style="display:block;padding:10px 12px;border:1px solid var(--line);border-radius:6px;margin-bottom:8px;cursor:pointer"><input type="radio" name="imp" value="mancanti" checked> <b>Aggiungi solo i mancanti</b> — le giornate, bozze e matricole già presenti restano come sono</label>
+    <label style="display:block;padding:10px 12px;border:1px solid var(--line);border-radius:6px;cursor:pointer"><input type="radio" name="imp" value="tutto"> <b>Sostituisci tutto</b> — il sito diventa identico al backup (prima scarico in automatico un backup di sicurezza di quello che c'è ora)</label>
+    <p class="err" id="imp-err" style="color:var(--danger);font-weight:600;margin-top:10px"></p>
+    <div class="modal-btns"><button class="btn ghost" data-close>Annulla</button><button class="btn amber" id="imp-ok">Importa</button></div>`);
+  $('imp-ok').onclick = async () => {
+    const tutto = document.querySelector('input[name="imp"]:checked').value === 'tutto';
+    if (tutto && !(await new Promise(res => { $('imp-err').innerHTML = 'Confermi? Tutto quello che c\'è ora nel sito verrà sostituito dal backup. <button class="btn danger sm" id="imp-conf">Sì, sostituisci tutto</button>'; $('imp-conf').onclick = () => res(true); }))) return;
+    $('imp-ok').disabled = true;
+    try {
+      if (tutto) { try { await esportaBackup(); } catch (e) {} }
+      await DB.ripristina(b, tutto);
+      ARCH = null; BOZZE = null; Object.keys(CACHE_DATI).forEach(k => delete CACHE_DATI[k]);
+      MATRICOLE = new Set((await DB.matricole()).map(normMatr));
+      chiudiModal(); toast(tutto ? 'Backup ripristinato: il sito ora è identico al file' : 'Importazione completata'); renderTabs(); renderArchivio();
+    } catch (e) { $('imp-ok').disabled = false; $('imp-err').textContent = 'Errore: ' + e.message; }
+  };
 }
 
 // ---------- riepilogo ----------
