@@ -58,6 +58,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:"Barlow","Segoe 
 .pill{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:.9rem;}
 .pill b{font-size:1.05rem;font-variant-numeric:tabular-nums;}
 .pill.neg{border-color:var(--danger);background:var(--danger-bg);color:var(--danger);}
+.pill.neg input{border-color:var(--danger);box-shadow:inset 0 0 0 1px var(--danger);}
 .pill input{font:inherit;font-weight:700;width:90px;padding:4px 7px;border:1px solid var(--line);border-radius:5px;text-transform:uppercase;}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 10px;}
 .toolbar input[type=search],.toolbar input[type=text]{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:6px;min-width:260px;background:var(--panel);}
@@ -541,10 +542,14 @@ function calcolaTotali(dati) {
   });
   return t;
 }
+function lineaMancante(k, cur) {
+  return LAV[k].tipo === 'A' && !cur.dati[k].linea && cur.dati[k].righe.some(r => MP_KEYS.some(f => f !== 'piatti' && !vuoto(r[f])));
+}
 function errori(cur) {
   const out = [];
   KEYS.forEach(k => {
     const rr = cur.dati[k].righe; const cols = colonne(k);
+    if (lineaMancante(k, cur)) out.push({ k, i: -1, f: 'linea', msg: 'Compila la linea di produzione (c\'è materia prima inserita)', col: 'Linea di produzione' });
     rr.forEach((r, i) => {
       const { E } = controllaRiga(k, rr, i);
       Object.keys(E).forEach(f => { const c = cols.find(x => x.k === f || x.calc === f); out.push({ k, i, f, msg: E[f], col: c ? c.l : f }); });
@@ -674,11 +679,12 @@ $('btn-xls').addEventListener('click', async () => {
 });
 function mostraErrori(errs, titolo) {
   apriModal(`<h2>${esc(titolo)}</h2><p>Clicca su una riga per andare al campo.</p><ul class="errlist">${errs.slice(0, 200).map((e, j) =>
-    `<li data-j="${j}"><b>${LAV[e.k].nome} · riga ${e.i + 1}</b> ${esc(e.col)}: ${esc(e.msg)}</li>`).join('')}</ul>
+    `<li data-j="${j}"><b>${LAV[e.k].nome}${e.i >= 0 ? ' · riga ' + (e.i + 1) : ''}</b> ${esc(e.col)}: ${esc(e.msg)}</li>`).join('')}</ul>
     <div class="modal-btns"><button class="btn" data-close>Chiudi</button></div>`);
   $('modal-card').querySelector('.errlist').addEventListener('click', ev => {
     const li = ev.target.closest('li'); if (!li) return; const e = errs[+li.dataset.j];
     chiudiModal(); SEARCH[e.k] = ''; vai(e.k);
+    if (e.f === 'linea') { $('linea').focus(); return; }
     const td = document.querySelector(`#v-lav td[data-i="${e.i}"][data-f="${e.f}"]`);
     if (td) { td.scrollIntoView({ block: 'center' }); const inp = td.querySelector('input'); if (inp) inp.focus(); }
   });
@@ -733,7 +739,7 @@ function renderLav() {
   $('add-righe').addEventListener('click', () => { for (let j = 0; j < 10; j++) D.righe.push({}); segnaModifica(); renderLav(); });
   $('cerca').addEventListener('input', e => { SEARCH[key] = e.target.value; applicaRicerca(); });
   $('azzera').addEventListener('click', () => { SEARCH[key] = ''; $('cerca').value = ''; applicaRicerca(); });
-  if ($('linea')) $('linea').addEventListener('change', e => { D.linea = e.target.value.trim().toUpperCase().replace(/\s+/g, ''); e.target.value = D.linea; segnaModifica(); });
+  if ($('linea')) $('linea').addEventListener('change', e => { D.linea = e.target.value.trim().toUpperCase().replace(/\s+/g, ''); e.target.value = D.linea; segnaModifica(); aggiornaControlli(); });
 }
 function rigaHTML(key, cols, r, i) {
   return `<tr data-i="${i}"><td class="n">${i + 1}</td>` + cols.map(c => {
@@ -816,6 +822,7 @@ function aggiornaControlli() {
     else if (k === 'forme') td.textContent = sommaCol(rr, k) || '';
     else td.textContent = fmtKg2(sommaCol(rr, k));
   });
+  if (L.tipo === 'A') { const lm = lineaMancante(key, CUR), pl = $('linea').closest('.pill'); pl.classList.toggle('neg', lm); pl.title = lm ? 'Obbligatoria: c\'è materia prima inserita' : ''; }
   if (L.tipo === 'A') { const res = residuoA(rr); $('res-val').textContent = fmtKg2(res) + ' kg'; $('pill-res').classList.toggle('neg', res < -0.0001); }
   const dt = $('data-testata'); if (dt) dt.textContent = dataTestata(key, CUR) || '—';
   renderTabs();
