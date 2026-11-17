@@ -1,0 +1,30 @@
+-- =====================================================================
+-- Lavorazioni · tabella delle giornate (17/11/2026)
+--
+-- Supabase → SQL Editor → New query → incolla questo script → Run.
+-- Si può rieseguire senza problemi. Crea solo una tabella nuova
+-- (lav_giornate): non tocca il registro lotti né il magazzino.
+--
+-- Accesso: solo l'utente Paolo (admin@lotti.local, stessa password del
+-- registro lotti). Una riga per giornata: tutte le 5 lavorazioni stanno
+-- in "dati"; in "totali" ci sono già i conti per il riepilogo mensile,
+-- così il riepilogo scarica pochissimi dati.
+-- =====================================================================
+
+create table if not exists public.lav_giornate (
+  data          date primary key,
+  dati          jsonb not null default '{}'::jsonb,
+  totali        jsonb not null default '{}'::jsonb,
+  aggiornato_il timestamptz not null default now()
+);
+
+alter table public.lav_giornate enable row level security;
+
+drop policy if exists lav_giornate_paolo on public.lav_giornate;
+create policy lav_giornate_paolo on public.lav_giornate
+  for all to authenticated
+  using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'admin@lotti.local')
+  with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'admin@lotti.local');
+
+revoke all on public.lav_giornate from anon;
+grant select, insert, update, delete on public.lav_giornate to authenticated;
