@@ -85,10 +85,13 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 .sheet td.c input{text-align:center;}
 .sheet td.up input{text-transform:uppercase;}
 .sheet td.err{background:var(--danger-bg) !important;box-shadow:inset 0 0 0 2px var(--danger);}
+.sheet tr.vietato td{background:#F8B4B4 !important;}
+.sheet tr.vietato td.n{background:var(--danger) !important;color:#fff;}
 .sheet td.auto{background:#E6F4EC !important;transition:background .4s;}
 .sheet td.rosso{background:#FF9999 !important;}
 .sheet td.rosso input{font-weight:700;}
 .legend .lr::before{background:#FF9999;}
+.legend .lv::before{background:#F8B4B4;box-shadow:inset 3px 0 0 var(--danger);}
 .sheet td.warn{background:var(--warn-bg) !important;box-shadow:inset 0 0 0 2px #E3B23C;}
 .sheet td.calc[data-f=lottoPF]{text-align:center;color:var(--ink);font-weight:500;}
 .sheet td.calc{background:var(--calc);text-align:right;padding:0 8px;font-weight:600;color:var(--muted);white-space:nowrap;}
@@ -903,9 +906,10 @@ function renderLav() {
     </div>
     <div class="sheet-wrap"><table class="sheet" id="sheet"><thead>${head1}${head2}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table></div>
     <div class="addrow"><button class="btn ghost sm" id="add-righe" type="button">+ Aggiungi 10 righe</button>
-    <span class="legend"><span class="le">errore da correggere</span><span class="lw">da controllare (non blocca il salvataggio)</span><span class="lr">matricola non in elenco (non blocca)</span></span></div>`;
+    <span class="legend"><span class="le">errore da correggere</span><span class="lw">da controllare (non blocca il salvataggio)</span><span class="lr">matricola non in elenco (non blocca)</span><span class="lv">riga rossa: prodotto diverso da Parmigiano Reggiano, Mezzano o Biologico</span></span></div>`;
   aggiornaControlli();
   applicaRicerca();
+  caricaProdotti(D.righe.map(r => r.lotto)).then(n => { if (n && PAGE === key) aggiornaControlli(); });
   const sh = $('sheet');
   sh.addEventListener('change', onCella);
   sh.addEventListener('keydown', onTasto);
@@ -941,12 +945,32 @@ function onCella(e) {
   segnaModifica(); aggiornaControlli();
   if (f === 'lotto' && RE_LOTTO_P.test(v || '')) compilaDaLotto(PAGE, i, v);
 }
+// prodotto del lotto (dal Registro lotti): ammessi solo Parmigiano Reggiano, Mezzano e Biologico
+const PRODOTTO_LOTTO = new Map();   // lotto → prodotto del registro, oppure '' se il lotto non è nel registro
+const prodottoAmmesso = p => /PARMIGIANO\s*REGGIANO|MEZZANO|\bBIO/.test(String(p).toUpperCase());
+function prodottoVietato(r) {
+  const p = r.lotto ? PRODOTTO_LOTTO.get(r.lotto) : undefined;
+  if (p) return prodottoAmmesso(p) ? null : p;
+  if (r.matr && /[A-Z]/i.test(r.matr)) return 'matricola ' + r.matr + ' (non Parmigiano Reggiano)';
+  return null;
+}
+async function caricaProdotti(lotti) {
+  const nuovi = [...new Set(lotti.filter(l => RE_LOTTO_P.test(l || '') && !PRODOTTO_LOTTO.has(l)))];
+  if (!nuovi.length) return false;
+  try {
+    const reg = await DB.lottiRegistro(nuovi);
+    nuovi.forEach(l => PRODOTTO_LOTTO.set(l, ''));
+    reg.forEach(x => PRODOTTO_LOTTO.set(x.lotto, x.prodotto || ''));
+    return true;
+  } catch (e) { return false; }
+}
 // compilazione automatica di matricola, mese e anno dal lotto
 const CACHE_LOTTI = new Map();   // lotto → {matr, mese, anno, fonte} oppure null
 async function datiLotto(l) {
   if (CACHE_LOTTI.has(l)) return CACHE_LOTTI.get(l);
   let ris = null;
   const reg = await DB.lottiRegistro([l]);
+  if (reg.length) PRODOTTO_LOTTO.set(l, reg[0].prodotto || ''); else PRODOTTO_LOTTO.set(l, '');
   if (reg.length) { const d = daRegistro(reg[0]); ris = { matr: normMatr(reg[0].matricola), mese: d.mese, anno: d.anno, fonte: 'registro', arrivo: reg[0].data_arrivo }; }
   else {
     const st = await DB.lottiRegistrati([l], null);
@@ -957,6 +981,7 @@ async function datiLotto(l) {
 }
 async function compilaDaLotto(key, i, l) {
   let d; try { d = await datiLotto(l); } catch (e) { return; }
+  if (PAGE === key) aggiornaControlli();
   if (!d || PAGE !== key || !CUR.data) return;
   const r = CUR.dati[key].righe[i]; if (!r || r.lotto !== l) return;   // nel frattempo il lotto è cambiato
   const campi = { matr: d.matr, mese: d.mese, anno: d.anno };
@@ -967,7 +992,7 @@ async function compilaDaLotto(key, i, l) {
     if (r[f] !== v) { r[f] = v; cambiati++; }
     const inp = document.querySelector(`#v-lav td[data-i="${i}"][data-f="${f}"] input`); if (inp) inp.value = mostra(inp.dataset.t, v);
   });
-  if (!cambiati) return;
+  if (!cambiati) { aggiornaControlli(); return; }
   segnaModifica(); aggiornaControlli();
   ['matr', 'mese', 'anno'].forEach(f => { const td = document.querySelector(`#v-lav td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.add('auto'); setTimeout(() => td.classList.remove('auto'), 1600); } });
   toast(d.fonte === 'registro' ? `${l}: matricola ${d.matr}, ${meseAnno(d)} presi dal Registro lotti` : `${l}: matricola ${d.matr}, ${meseAnno(d)} presi dalla giornata del ${isoToIt(d.data)}`);
@@ -1025,6 +1050,10 @@ function onHover(e) {
 function aggiornaControlli() {
   const key = PAGE, L = LAV[key], rr = CUR.dati[key].righe, sh = $('sheet'); if (!sh) return;
   sh.querySelectorAll('td.err,td.warn,td.rosso').forEach(td => { td.classList.remove('err', 'warn', 'rosso'); delete td.dataset.msg; });
+  rr.forEach((r, i) => {
+    const tr = sh.querySelector(`tbody tr[data-i="${i}"]`), v = prodottoVietato(r);
+    if (tr) { tr.classList.toggle('vietato', !!v); tr.title = v ? 'Prodotto non ammesso: ' + v : ''; }
+  });
   rr.forEach((r, i) => {
     const lp = sh.querySelector(`td[data-i="${i}"][data-f="lottoPF"]`); if (lp) lp.textContent = haPFdati(r) ? lottoGiornata(CUR.data) : '';
     const { E, W, R } = controllaRiga(key, rr, i);
