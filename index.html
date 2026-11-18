@@ -107,6 +107,22 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 .list th,.list td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;}
 .list th{background:var(--head);color:var(--muted);font-size:.76rem;font-weight:600;position:sticky;top:0;z-index:2;}
 .list td.r,.list th.r{text-align:right;}
+.list th.thf{cursor:pointer;user-select:none;}
+.list th.thf:hover{background:#E9EEF3;color:var(--ink);}
+.list th.thf .fil{font-size:.7rem;opacity:.45;margin-left:2px;}
+.list th.thf .fil.on{opacity:1;color:var(--link);}
+.list th.thf.attivo{background:#E7EEF6;color:var(--link);}
+.filtro-pop{position:absolute;z-index:150;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.22);width:270px;padding:10px;font-size:.88rem;}
+.filtro-pop .fp-tit{font-weight:700;margin:0 0 6px 2px;}
+.filtro-pop .fp-op{display:block;width:100%;text-align:left;border:0;background:none;font:inherit;padding:6px 6px;border-radius:5px;cursor:pointer;color:var(--ink);}
+.filtro-pop .fp-op:hover{background:var(--head);}
+.filtro-pop .fp-cerca{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:5px;margin:6px 0;}
+.filtro-pop .fp-lista{max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:5px;padding:4px 0;}
+.filtro-pop .fp-v{display:flex;gap:6px;align-items:center;padding:3px 8px;cursor:pointer;}
+.filtro-pop .fp-v:hover{background:var(--head);}
+.filtro-pop .fp-v i{margin-left:auto;color:var(--muted);font-style:normal;font-size:.78rem;}
+.filtro-pop .fp-tutti{font-weight:600;}
+.filtro-pop .fp-btn{display:flex;gap:6px;margin-top:8px;align-items:center;}
 .list tfoot td{font-weight:700;background:var(--head);border-top:2px solid #AEB8C2;}
 .list tr.tot td{font-weight:700;background:var(--head);}
 .list .act{display:flex;gap:6px;}
@@ -341,7 +357,7 @@ let PAGE = 'grattugiato';
 let ARCH = null;           // elenco giornate [{data, totali}] (scaricato solo quando serve)
 const CACHE_DATI = {};     // data → dati (giornate già scaricate per il riepilogo)
 const SEARCH = {};
-let RIEP = { sub: 'righe', lav: 'grattugiato', mese: null, q: '' };
+let RIEP = { sub: 'righe', lav: 'grattugiato', mese: null, q: '', filtri: {}, ord: null };   // filtri: colonna → valori scelti; ord: {f, dir}
 
 function rigaVuota() { return {}; }
 function giornataVuota(data) {
@@ -615,6 +631,7 @@ function renderTabs() {
 }
 $('tabs').addEventListener('click', e => { const b = e.target.closest('[data-page]'); if (b) vai(b.dataset.page); });
 function vai(p) {
+  chiudiFiltro();
   PAGE = p; renderTabs();
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   if (LAV[p]) { $('v-lav').classList.add('active'); renderLav(); }
@@ -1106,8 +1123,8 @@ async function renderRiepilogo() {
     body.innerHTML = `<div class="subtabs" id="r-lav">${KEYS.map(k => `<button data-k="${k}" class="${RIEP.lav === k ? 'on' : ''}">${LAV[k].nome}</button>`).join('')}</div>
       <div class="toolbar">${selMese}<input type="search" id="r-q" placeholder="Cerca (lotto, matricola, marchio…)" value="${esc(RIEP.q)}"><button class="btn ghost sm" id="r-azzera">Azzera ricerca</button><span class="info" id="r-info"></span><span style="flex:1"></span><button class="btn ghost sm" id="r-xls">Esporta Excel</button></div>
       <div class="panel" style="padding:0" id="r-tab"><div class="empty">Caricamento…</div></div>`;
-    $('r-lav').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) { RIEP.lav = b.dataset.k; renderRiepilogo(); } });
-    $('r-mese').addEventListener('change', e => { RIEP.mese = e.target.value; renderRiepilogo(); });
+    $('r-lav').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) { RIEP.lav = b.dataset.k; RIEP.filtri = {}; RIEP.ord = null; renderRiepilogo(); } });
+    $('r-mese').addEventListener('change', e => { RIEP.mese = e.target.value; RIEP.filtri = {}; renderRiepilogo(); });
     $('r-q').addEventListener('input', e => { RIEP.q = e.target.value; disegnaRigheRiep(); });
     $('r-azzera').addEventListener('click', () => { RIEP.q = ''; $('r-q').value = ''; disegnaRigheRiep(); });
     $('r-xls').addEventListener('click', esportaRiepilogoModello);
@@ -1125,17 +1142,89 @@ function filtraRiep(rows) {
   const q = RIEP.q.trim().toLowerCase(); if (!q) return rows;
   return rows.filter(r => Object.entries(r).some(([f, v]) => String(f === 'data' ? isoToIt(v) : v === true ? 'piatti' : v).toLowerCase().includes(q)));
 }
+const VUOTE = '(vuote)';
+const valFiltro = (f, v) => { const t = cellaRiep(f, v); return t === '' ? VUOTE : t; };
+function righeBaseRiep() {
+  const g = Object.keys(CACHE_DATI).filter(d => ARCH.some(x => x.data === d) && (!RIEP.mese || meseKey(d) === RIEP.mese)).map(d => ({ data: d, dati: CACHE_DATI[d] }));
+  return filtraRiep(righeRiepilogo(RIEP.lav, g));
+}
+function applicaFiltri(rows, tranne) {
+  return rows.filter(r => Object.entries(RIEP.filtri).every(([f, set]) => f === tranne || set.has(valFiltro(f, r[f]))));
+}
+function confronta(a, b) {
+  if (a === VUOTE) return 1; if (b === VUOTE) return -1;
+  const na = parseNum(a.replace(/^(\d{2})-(\d{2})-(\d{4})$/, '$3$2$1')), nb = parseNum(b.replace(/^(\d{2})-(\d{2})-(\d{4})$/, '$3$2$1'));
+  if (!isNaN(na) && !isNaN(nb) && na != null && nb != null) return na - nb;
+  return a.localeCompare(b, 'it', { numeric: true });
+}
 function disegnaRigheRiep() {
   const k = RIEP.lav, cols = colRiep(k);
-  const g = Object.keys(CACHE_DATI).filter(d => ARCH.some(x => x.data === d) && (!RIEP.mese || meseKey(d) === RIEP.mese)).map(d => ({ data: d, dati: CACHE_DATI[d] }));
-  const rows = filtraRiep(righeRiepilogo(k, g));
-  $('r-info').textContent = rows.length + (rows.length === 1 ? ' riga' : ' righe');
-  if (!rows.length) { $('r-tab').innerHTML = '<div class="empty">Nessuna riga.</div>'; return; }
+  let rows = applicaFiltri(righeBaseRiep());
+  if (RIEP.ord) {
+    const { f, dir } = RIEP.ord;
+    rows = rows.map((r, i) => [r, i]).sort((a, b) => {
+      const va = a[0][f], vb = b[0][f];
+      const c = (typeof va === 'number' && typeof vb === 'number') ? va - vb
+        : f === 'data' ? String(va).localeCompare(String(vb)) : confronta(valFiltro(f, va), valFiltro(f, vb));
+      return (c || a[1] - b[1]) * dir;
+    }).map(x => x[0]);
+  }
+  const nf = Object.keys(RIEP.filtri).length;
+  $('r-info').innerHTML = rows.length + (rows.length === 1 ? ' riga' : ' righe') + (nf ? ` · ${nf} ${nf === 1 ? 'filtro attivo' : 'filtri attivi'} <button class="btn ghost sm" id="r-azzera-filtri" type="button">Togli filtri</button>` : '');
+  if ($('r-azzera-filtri')) $('r-azzera-filtri').onclick = () => { RIEP.filtri = {}; RIEP.ord = null; disegnaRigheRiep(); };
   const tot = f => rows.reduce((s, r) => s + (typeof r[f] === 'number' ? r[f] : 0), 0);
-  $('r-tab').innerHTML = `<div class="list-wrap"><table class="list" style="width:100%"><thead><tr>${cols.map(([f, l]) => `<th class="${KG_COLS.has(f) || f === 'forme' ? 'r' : ''}">${l}</th>`).join('')}</tr></thead>
-    <tbody>${rows.map(r => `<tr>${cols.map(([f]) => `<td class="${KG_COLS.has(f) || f === 'forme' ? 'r' : ''}${f === 'rim' && r.rim < -0.0001 ? ' neg' : ''}">${esc(cellaRiep(f, r[f]))}</td>`).join('')}</tr>`).join('')}</tbody>
+  const icona = f => RIEP.filtri[f] ? '<span class="fil on" title="Filtro attivo">&#x25BC;</span>' : RIEP.ord && RIEP.ord.f === f ? `<span class="fil on">${RIEP.ord.dir > 0 ? '&#x25B2;' : '&#x25BC;'}</span>` : '<span class="fil">&#x25BE;</span>';
+  $('r-tab').innerHTML = `<div class="list-wrap"><table class="list" style="width:100%"><thead><tr>${cols.map(([f, l]) => `<th class="thf ${KG_COLS.has(f) || f === 'forme' ? 'r' : ''}${RIEP.filtri[f] ? ' attivo' : ''}" data-col="${f}">${l} ${icona(f)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.length ? rows.map(r => `<tr>${cols.map(([f]) => `<td class="${KG_COLS.has(f) || f === 'forme' ? 'r' : ''}${f === 'rim' && r.rim < -0.0001 ? ' neg' : ''}">${esc(cellaRiep(f, r[f]))}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${cols.length}" class="empty">Nessuna riga con questi filtri.</td></tr>`}</tbody>
     <tfoot><tr>${cols.map(([f], j) => `<td class="r">${j === 0 ? 'Totale' : (KG_COLS.has(f) && f !== 'media') ? fmtKg2(tot(f)) : f === 'forme' ? tot(f) : ''}</td>`).join('')}</tr></tfoot></table></div>`;
+  $('r-tab').querySelector('thead').onclick = e => { const th = e.target.closest('th[data-col]'); if (th) apriFiltro(th); };
 }
+function apriFiltro(th) {
+  chiudiFiltro();
+  const f = th.dataset.col, etichetta = th.textContent.replace(/[\u25B2\u25BC\u25BE]/g, '').trim();
+  const base = applicaFiltri(righeBaseRiep(), f);                 // valori possibili con gli altri filtri applicati (come in Excel)
+  const conta = new Map(); base.forEach(r => { const v = valFiltro(f, r[f]); conta.set(v, (conta.get(v) || 0) + 1); });
+  const valori = [...conta.keys()].sort(f === 'data' ? ((a, b) => a === VUOTE ? 1 : b === VUOTE ? -1 : a.split('-').reverse().join('').localeCompare(b.split('-').reverse().join(''))) : confronta);
+  const scelti = RIEP.filtri[f] ? new Set(RIEP.filtri[f]) : new Set(valori);
+  const box = document.createElement('div'); box.className = 'filtro-pop'; box.id = 'filtro-pop';
+  box.innerHTML = `<div class="fp-tit">${esc(etichetta)}</div>
+    <button type="button" class="fp-op" data-ord="1">&#x25B2; Ordina dal più piccolo al più grande</button>
+    <button type="button" class="fp-op" data-ord="-1">&#x25BC; Ordina dal più grande al più piccolo</button>
+    <input type="search" class="fp-cerca" placeholder="Cerca">
+    <label class="fp-v fp-tutti"><input type="checkbox" data-tutti> (Seleziona tutto)</label>
+    <div class="fp-lista">${valori.map((v, i) => `<label class="fp-v" data-v="${esc(v.toLowerCase())}"><input type="checkbox" data-i="${i}"${scelti.has(v) ? ' checked' : ''}> <span>${esc(v)}</span> <i>${conta.get(v)}</i></label>`).join('')}</div>
+    <div class="fp-btn"><button type="button" class="btn ghost sm" data-azione="togli">Togli filtro</button><span style="flex:1"></span><button type="button" class="btn ghost sm" data-azione="annulla">Annulla</button><button type="button" class="btn sm" data-azione="ok">OK</button></div>`;
+  document.body.appendChild(box);
+  const r = th.getBoundingClientRect();
+  box.style.top = (r.bottom + window.scrollY + 2) + 'px';
+  box.style.left = Math.max(8, Math.min(r.left + window.scrollX, window.innerWidth - box.offsetWidth - 12)) + 'px';
+  const checks = [...box.querySelectorAll('.fp-lista input')], tutti = box.querySelector('[data-tutti]');
+  const visibili = () => checks.filter(c => !c.closest('label').hidden);
+  const aggTutti = () => { const v = visibili(); tutti.checked = v.length > 0 && v.every(c => c.checked); tutti.indeterminate = !tutti.checked && v.some(c => c.checked); };
+  aggTutti();
+  tutti.onchange = () => { visibili().forEach(c => c.checked = tutti.checked); };
+  box.querySelector('.fp-lista').onchange = aggTutti;
+  const cerca = box.querySelector('.fp-cerca');
+  cerca.oninput = () => { const q = cerca.value.trim().toLowerCase(); checks.forEach(c => { const l = c.closest('label'); l.hidden = !!q && !l.dataset.v.includes(q); }); if (q) visibili().forEach(c => c.checked = true); aggTutti(); };
+  cerca.focus();
+  const applica = () => {
+    const q = cerca.value.trim();
+    const sel = new Set(checks.filter(c => c.checked && (!q || !c.closest('label').hidden)).map(c => valori[+c.dataset.i]));
+    if (sel.size === valori.length && !q) delete RIEP.filtri[f]; else RIEP.filtri[f] = sel;
+    chiudiFiltro(); disegnaRigheRiep();
+  };
+  box.onclick = e => {
+    const o = e.target.closest('[data-ord]'); if (o) { RIEP.ord = { f, dir: +o.dataset.ord }; chiudiFiltro(); disegnaRigheRiep(); return; }
+    const a = e.target.closest('[data-azione]'); if (!a) return;
+    if (a.dataset.azione === 'ok') applica();
+    else if (a.dataset.azione === 'togli') { delete RIEP.filtri[f]; if (RIEP.ord && RIEP.ord.f === f) RIEP.ord = null; chiudiFiltro(); disegnaRigheRiep(); }
+    else chiudiFiltro();
+  };
+  cerca.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); applica(); } if (e.key === 'Escape') chiudiFiltro(); };
+  setTimeout(() => document.addEventListener('mousedown', fuoriFiltro), 0);
+}
+function fuoriFiltro(e) { const b = $('filtro-pop'); if (b && !b.contains(e.target) && !e.target.closest('th[data-col]')) chiudiFiltro(); }
+function chiudiFiltro() { const b = $('filtro-pop'); if (b) b.remove(); document.removeEventListener('mousedown', fuoriFiltro); }
 function totMese(m) {
   const t = {}; KEYS.forEach(k => { t[k] = { introdotta: 0, prodotto: 0, sfridi: 0, cat3: 0, fasce: {} }; FASCE.forEach(([f]) => t[k].fasce[f] = 0); });
   ARCH.filter(x => meseKey(x.data) === m).forEach(x => KEYS.forEach(k => {
