@@ -752,6 +752,13 @@ async function salvaGiornata() {
   let confl;
   try { confl = await controllaLotti(); } catch (e) { toast('Controllo lotti non riuscito: ' + e.message, true); return false; }
   if (confl.length) { mostraConflittiLotti(confl); return false; }
+  await caricaProdotti(KEYS.flatMap(k => CUR.dati[k].righe.map(r => r.lotto)));
+  const vietati = [];
+  KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { const v = prodottoVietato(r); if (v) vietati.push(`<li><b>${LAV[k].nome} · riga ${i + 1}</b> lotto ${esc(r.lotto || '—')}: ${esc(v)}</li>`); }));
+  if (vietati.length) {
+    const ok = await chiedi('Prodotti diversi da Parmigiano Reggiano', `Queste righe (in rosso) non sono Parmigiano Reggiano, Mezzano o Biologico:<ul class="errlist" style="margin-top:10px">${vietati.slice(0, 50).join('')}</ul><p style="margin-top:12px">Confermi di voler salvare la giornata così?</p>`, 'Sì, salva comunque', 'Torna indietro', true);
+    if (!ok) return false;
+  }
   const fuori = [];
   KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (!vuoto(r.matr) && !MATRICOLE.has(normMatr(r.matr))) fuori.push(`<li><b>${LAV[k].nome} · riga ${i + 1}</b> matricola ${esc(r.matr)}</li>`); }));
   if (fuori.length) {
