@@ -851,6 +851,7 @@ function renderLav() {
   const sh = $('sheet');
   sh.addEventListener('change', onCella);
   sh.addEventListener('keydown', onTasto);
+  sh.addEventListener('input', onCompletaLotto);
   sh.addEventListener('click', onClickCella);
   sh.addEventListener('mouseover', onHover);
   sh.addEventListener('mouseout', () => { $('tip').hidden = true; });
@@ -880,6 +881,18 @@ function onCella(e) {
   if (vuoto(v)) delete r[f]; else r[f] = v;
   inp.value = mostra(t, v);
   segnaModifica(); aggiornaControlli();
+}
+// completamento automatico (come Excel) delle parole del lotto già scritte più in alto nella colonna
+function onCompletaLotto(e) {
+  const inp = e.target; if (!inp.matches('td[data-f="lotto"] input') || e.inputType !== 'insertText') return;
+  const pos = inp.selectionStart; if (pos !== inp.value.length) return;
+  const scritto = inp.value.toUpperCase(); if (!/^[A-Z]+$/.test(scritto)) return;
+  const i = +inp.closest('td').dataset.i, rr = CUR.dati[PAGE].righe;
+  const sopra = new Set(rr.slice(0, i).map(r => r.lotto).filter(v => PAROLE_LOTTO.includes(v)));
+  const cand = [...sopra].filter(w => w.startsWith(scritto));
+  if (cand.length !== 1 || cand[0] === scritto) return;
+  inp.value = cand[0];
+  inp.setSelectionRange(scritto.length, cand[0].length);   // la parte proposta resta selezionata: continui a scrivere o confermi con Invio/Tab
 }
 function onClickCella(e) {
   const td = e.target.closest('td.chk'); if (!td) return;
