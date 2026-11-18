@@ -479,6 +479,17 @@ const DB = {
     for (const c of blocchi(b.matricole.map(m => ({ matricola: m })), 200))
       ok(await sb.from('lav_matricole').upsert(c, { ignoreDuplicates: true }));
   },
+  async lottiRegistrati(lotti, escludi) {
+    if (DEMO) {
+      const o = demoLoad(), out = [];
+      Object.keys(o).filter(d => d !== escludi).sort().forEach(d => Object.entries(o[d].dati).forEach(([k, v]) => (v.righe || []).forEach((r, i) => {
+        if (lotti.includes(r.lotto)) out.push({ lotto: r.lotto, matr: r.matr, mese: r.mese, anno: r.anno, data: d, lav: k, riga: i + 1 });
+      })));
+      return out;
+    }
+    const { data, error } = await sb.rpc('lav_lotti_registrati', { p_lotti: lotti, p_escludi: escludi });
+    if (error) throw error; return data;
+  },
   async elimina(d) {
     if (DEMO) { const o = demoLoad(); delete o[d]; demoSave(o); return; }
     const { error } = await sb.from('lav_giornate').delete().eq('data', d);
@@ -695,6 +706,9 @@ async function salvaGiornata() {
   if (errs.length) { mostraErrori(errs, 'Non posso salvare: ci sono campi da correggere'); return false; }
   const dati = datiDaSalvare(CUR.dati), tot = calcolaTotali(dati);
   if (!KEYS.some(k => tot[k].righe)) { toast('La giornata è vuota: non c\'è niente da salvare', true); return false; }
+  let confl;
+  try { confl = await controllaLotti(); } catch (e) { toast('Controllo lotti non riuscito: ' + e.message, true); return false; }
+  if (confl.length) { mostraConflittiLotti(confl); return false; }
   const fuori = [];
   KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (!vuoto(r.matr) && !MATRICOLE.has(normMatr(r.matr))) fuori.push(`<li><b>${LAV[k].nome} · riga ${i + 1}</b> matricola ${esc(r.matr)}</li>`); }));
   if (fuori.length) {
@@ -747,6 +761,42 @@ $('btn-indietro').addEventListener('click', () => {
   $('ind-no').onclick = () => { chiudiModal(); esci(); };
   $('ind-si').onclick = async () => { chiudiModal(); if (await salvaGiornata()) esci(); };
 });
+// ---------- controllo lotto ↔ matricola e mese/anno (esclusi ESTERNO, RESIDUO, INTERNO, RIAPERTURA) ----------
+const comboLotto = r => normMatr(r.matr) + '|' + (r.mese ?? '') + '|' + (r.anno ?? '');
+const descrCombo = r => `matricola <b>${esc(r.matr || '—')}</b> ${r.mese && r.anno ? MESI[r.mese - 1] + '-' + String(r.anno).slice(-2) : '(mese/anno mancanti)'}`;
+async function controllaLotti() {
+  const qui = {};                                     // lotto → [{k, i, r}]
+  KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (RE_LOTTO_P.test(r.lotto || '')) (qui[r.lotto] = qui[r.lotto] || []).push({ k, i, r }); }));
+  const lotti = Object.keys(qui); if (!lotti.length) return [];
+  const out = [];
+  // 1) nella stessa giornata
+  lotti.forEach(l => {
+    const combos = [...new Set(qui[l].map(x => comboLotto(x.r)))];
+    if (combos.length > 1) out.push({ lotto: l, k: qui[l][0].k, i: qui[l][0].i,
+      testo: `in questa giornata è scritto con dati diversi: ${combos.map(c => { const x = qui[l].find(y => comboLotto(y.r) === c); return `${descrCombo(x.r)} (${LAV[x.k].nome} riga ${x.i + 1})`; }).join(' e ')}` });
+  });
+  // 2) con le giornate già salvate
+  const reg = await DB.lottiRegistrati(lotti, CUR.data);
+  reg.forEach(x => {
+    const c = comboLotto(x), mie = qui[x.lotto].filter(y => comboLotto(y.r) !== c);
+    if (!mie.length) return;
+    const y = mie[0];
+    out.push({ lotto: x.lotto, k: y.k, i: y.i,
+      testo: `qui ${descrCombo(y.r)} (${LAV[y.k].nome} riga ${y.i + 1}), ma il ${isoToIt(x.data)} è stato registrato con ${descrCombo(x)} (${LAV[x.lav] ? LAV[x.lav].nome : x.lav} riga ${x.riga})` });
+  });
+  return out;
+}
+function mostraConflittiLotti(confl) {
+  apriModal(`<h2>Lotti con matricola o mese diversi</h2><p>Ogni lotto deve avere sempre la stessa matricola e lo stesso mese/anno. Correggi prima di salvare (clicca su una riga per andare al campo):</p>
+    <ul class="errlist">${confl.map((c, j) => `<li data-j="${j}"><b>${esc(c.lotto)}</b>: ${c.testo}</li>`).join('')}</ul>
+    <div class="modal-btns"><button class="btn" data-close>Chiudi</button></div>`);
+  $('modal-card').querySelector('.errlist').addEventListener('click', ev => {
+    const li = ev.target.closest('li'); if (!li) return; const c = confl[+li.dataset.j];
+    chiudiModal(); SEARCH[c.k] = ''; vai(c.k);
+    const td = document.querySelector(`#v-lav td[data-i="${c.i}"][data-f="matr"]`);
+    if (td) { td.scrollIntoView({ block: 'center' }); const inp = td.querySelector('input'); if (inp) inp.focus(); }
+  });
+}
 function mostraErrori(errs, titolo) {
   apriModal(`<h2>${esc(titolo)}</h2><p>Clicca su una riga per andare al campo.</p><ul class="errlist">${errs.slice(0, 200).map((e, j) =>
     `<li data-j="${j}"><b>${LAV[e.k].nome}${e.i >= 0 ? ' · riga ' + (e.i + 1) : ''}</b> ${esc(e.col)}: ${esc(e.msg)}</li>`).join('')}</ul>

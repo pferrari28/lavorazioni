@@ -62,3 +62,21 @@ create policy lav_bozze_paolo on public.lav_bozze
   with check (lower(coalesce((select auth.jwt()) ->> 'email', '')) = 'admin@lotti.local');
 revoke all on public.lav_bozze from anon;
 grant select, insert, update, delete on public.lav_bozze to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Controllo lotto ↔ matricola/mese/anno (usata al salvataggio) — 18/11/2026
+-- ---------------------------------------------------------------------
+create or replace function public.lav_lotti_registrati(p_lotti text[], p_escludi date default null)
+returns table(lotto text, matr text, mese int, anno int, data date, lav text, riga int)
+language sql stable security invoker set search_path = public as $$
+  select distinct on (r.v->>'lotto', r.v->>'matr', r.v->>'mese', r.v->>'anno')
+         r.v->>'lotto', r.v->>'matr', (r.v->>'mese')::int, (r.v->>'anno')::int, g.data, k.key, r.n::int
+  from lav_giornate g
+  cross join lateral jsonb_each(g.dati) k
+  cross join lateral jsonb_array_elements(k.value->'righe') with ordinality r(v, n)
+  where (p_escludi is null or g.data <> p_escludi)
+    and r.v->>'lotto' = any(p_lotti)
+  order by r.v->>'lotto', r.v->>'matr', r.v->>'mese', r.v->>'anno', g.data, k.key, r.n
+$$;
+revoke all on function public.lav_lotti_registrati(text[], date) from anon, public;
+grant execute on function public.lav_lotti_registrati(text[], date) to authenticated;
