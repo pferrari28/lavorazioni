@@ -112,6 +112,11 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 .list th.thf .fil{font-size:.7rem;opacity:.45;margin-left:2px;}
 .list th.thf .fil.on{opacity:1;color:var(--link);}
 .list th.thf.attivo{background:#E7EEF6;color:var(--link);}
+.conf-lotto{table-layout:fixed;}
+.conf-lotto thead tr:last-child th:nth-child(1){width:36%;}
+.conf-lotto thead tr:last-child th:nth-child(2){width:28%;}
+.conf-lotto tr.vai{cursor:pointer;}
+.conf-lotto tr.vai:hover td{background:#FFFBEA;}
 .filtro-pop{position:absolute;z-index:150;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.22);width:270px;padding:10px;font-size:.88rem;}
 .filtro-pop .fp-tit{font-weight:700;margin:0 0 6px 2px;}
 .filtro-pop .fp-op{display:block;width:100%;text-align:left;border:0;background:none;font:inherit;padding:6px 6px;border-radius:5px;cursor:pointer;color:var(--ink);}
@@ -763,39 +768,46 @@ $('btn-indietro').addEventListener('click', () => {
 });
 // ---------- controllo lotto ↔ matricola e mese/anno (esclusi ESTERNO, RESIDUO, INTERNO, RIAPERTURA) ----------
 const comboLotto = r => normMatr(r.matr) + '|' + (r.mese ?? '') + '|' + (r.anno ?? '');
-const descrCombo = r => `matricola <b>${esc(r.matr || '—')}</b> ${r.mese && r.anno ? MESI[r.mese - 1] + '-' + String(r.anno).slice(-2) : '(mese/anno mancanti)'}`;
+const meseAnno = r => r.mese && r.anno ? MESI[r.mese - 1] + '-' + String(r.anno).slice(-2) : '—';
 async function controllaLotti() {
   const qui = {};                                     // lotto → [{k, i, r}]
   KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (RE_LOTTO_P.test(r.lotto || '')) (qui[r.lotto] = qui[r.lotto] || []).push({ k, i, r }); }));
   const lotti = Object.keys(qui); if (!lotti.length) return [];
-  const out = [];
-  // 1) nella stessa giornata
-  lotti.forEach(l => {
-    const combos = [...new Set(qui[l].map(x => comboLotto(x.r)))];
-    if (combos.length > 1) out.push({ lotto: l, k: qui[l][0].k, i: qui[l][0].i,
-      testo: `in questa giornata è scritto con dati diversi: ${combos.map(c => { const x = qui[l].find(y => comboLotto(y.r) === c); return `${descrCombo(x.r)} (${LAV[x.k].nome} riga ${x.i + 1})`; }).join(' e ')}` });
-  });
-  // 2) con le giornate già salvate
   const reg = await DB.lottiRegistrati(lotti, CUR.data);
-  reg.forEach(x => {
-    const c = comboLotto(x), mie = qui[x.lotto].filter(y => comboLotto(y.r) !== c);
-    if (!mie.length) return;
-    const y = mie[0];
-    out.push({ lotto: x.lotto, k: y.k, i: y.i,
-      testo: `qui ${descrCombo(y.r)} (${LAV[y.k].nome} riga ${y.i + 1}), ma il ${isoToIt(x.data)} è stato registrato con ${descrCombo(x)} (${LAV[x.lav] ? LAV[x.lav].nome : x.lav} riga ${x.riga})` });
+  const out = [];
+  lotti.forEach(l => {
+    const righe = [], visti = new Set();
+    qui[l].forEach(x => { const c = comboLotto(x.r); if (visti.has('q' + c)) return; visti.add('q' + c);
+      righe.push({ quando: 'Questa giornata', dove: `${LAV[x.k].nome} riga ${x.i + 1}`, matr: x.r.matr || '—', ma: meseAnno(x.r), c, k: x.k, i: x.i }); });
+    reg.filter(x => x.lotto === l).forEach(x => { const c = comboLotto(x);
+      righe.push({ quando: 'Già registrato il ' + isoToIt(x.data), dove: `${LAV[x.lav] ? LAV[x.lav].nome : x.lav} riga ${x.riga}`, matr: x.matr || '—', ma: meseAnno(x), c }); });
+    const combos = new Set(righe.map(x => x.c));
+    if (combos.size > 1) {
+      const primo = righe.find(x => x.k) || {};
+      out.push({ lotto: l, k: primo.k, i: primo.i, righe });
+    }
   });
   return out;
 }
 function mostraConflittiLotti(confl) {
-  apriModal(`<h2>Lotti con matricola o mese diversi</h2><p>Ogni lotto deve avere sempre la stessa matricola e lo stesso mese/anno. Correggi prima di salvare (clicca su una riga per andare al campo):</p>
-    <ul class="errlist">${confl.map((c, j) => `<li data-j="${j}"><b>${esc(c.lotto)}</b>: ${c.testo}</li>`).join('')}</ul>
+  const diversa = (rr, f) => new Set(rr.map(x => x[f])).size > 1;
+  apriModal(`<h2>Lotti con matricola o mese diversi</h2>
+    <p>Ogni lotto deve avere sempre la stessa matricola e lo stesso mese/anno. Correggi prima di salvare: clicca su una riga di <b>questa giornata</b> per andare alla cella.</p>
+    <div style="max-height:55vh;overflow:auto">${confl.map((c, j) => {
+      const dm = diversa(c.righe, 'matr'), da = diversa(c.righe, 'ma');
+      return `<table class="list conf-lotto" style="width:100%;margin-bottom:14px"><thead><tr><th colspan="4" style="font-size:.95rem;color:var(--ink);background:#FDE7E6">Lotto ${esc(c.lotto)}</th></tr>
+        <tr><th>Quando</th><th>Dove</th><th>Matricola</th><th>Mese-anno</th></tr></thead><tbody>
+        ${c.righe.map(x => `<tr${x.k ? ` class="vai" data-j="${j}" data-k="${x.k}" data-i="${x.i}" title="Vai alla cella"` : ''}><td>${x.k ? '<b>Questa giornata</b>' : esc(x.quando)}</td><td>${esc(x.dove)}</td>
+          <td style="${dm ? 'color:var(--danger);font-weight:700' : ''}">${esc(x.matr)}</td><td style="${da ? 'color:var(--danger);font-weight:700' : ''}">${esc(x.ma)}</td></tr>`).join('')}
+        </tbody></table>`; }).join('')}</div>
     <div class="modal-btns"><button class="btn" data-close>Chiudi</button></div>`);
-  $('modal-card').querySelector('.errlist').addEventListener('click', ev => {
-    const li = ev.target.closest('li'); if (!li) return; const c = confl[+li.dataset.j];
-    chiudiModal(); SEARCH[c.k] = ''; vai(c.k);
-    const td = document.querySelector(`#v-lav td[data-i="${c.i}"][data-f="matr"]`);
+  $('modal-card').addEventListener('click', ev => {
+    const tr = ev.target.closest('tr.vai'); if (!tr) return;
+    const k = tr.dataset.k, i = +tr.dataset.i;
+    chiudiModal(); SEARCH[k] = ''; vai(k);
+    const td = document.querySelector(`#v-lav td[data-i="${i}"][data-f="matr"]`);
     if (td) { td.scrollIntoView({ block: 'center' }); const inp = td.querySelector('input'); if (inp) inp.focus(); }
-  });
+  }, { once: false });
 }
 function mostraErrori(errs, titolo) {
   apriModal(`<h2>${esc(titolo)}</h2><p>Clicca su una riga per andare al campo.</p><ul class="errlist">${errs.slice(0, 200).map((e, j) =>
