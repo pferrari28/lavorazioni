@@ -115,6 +115,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 .conf-lotto td,.conf-lotto thead tr:last-child th{white-space:nowrap;width:1%;padding-right:22px;}
 .conf-lotto td:nth-child(2),.conf-lotto thead tr:last-child th:nth-child(2){width:auto;}
 .conf-lotto tr.vai{cursor:pointer;}
+.conf-lotto tr.uff td{background:var(--ok-bg);}
 .conf-lotto tr.vai:hover td{background:#FFFBEA;}
 .filtro-pop{position:absolute;z-index:150;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.22);width:270px;padding:10px;font-size:.88rem;}
 .filtro-pop .fp-tit{font-weight:700;margin:0 0 6px 2px;}
@@ -483,6 +484,11 @@ const DB = {
     for (const c of blocchi(b.matricole.map(m => ({ matricola: m })), 200))
       ok(await sb.from('lav_matricole').upsert(c, { ignoreDuplicates: true }));
   },
+  async lottiRegistro(lotti) {           // lotti del Registro lotti (stesso database)
+    if (DEMO) { try { return JSON.parse(localStorage.getItem('lav_demo_registro') || '[]').filter(x => lotti.includes(x.lotto)); } catch (e) { return []; } }
+    const { data, error } = await sb.rpc('lav_lotti_registro', { p_lotti: lotti });
+    if (error) throw error; return data;
+  },
   async lottiRegistrati(lotti, escludi) {
     if (DEMO) {
       const o = demoLoad(), out = [];
@@ -766,37 +772,48 @@ $('btn-indietro').addEventListener('click', () => {
   $('ind-si').onclick = async () => { chiudiModal(); if (await salvaGiornata()) esci(); };
 });
 // ---------- controllo lotto ↔ matricola e mese/anno (esclusi ESTERNO, RESIDUO, INTERNO, RIAPERTURA) ----------
-const comboLotto = r => normMatr(r.matr) + '|' + (r.mese ?? '') + '|' + (r.anno ?? '');
+const comboLotto = r => normMatr(r.matr).replace(/\s+/g, '') + '|' + (r.mese ?? '') + '|' + (r.anno ?? '');
+function daRegistro(x) {                                // produzione "AGO-25" → mese 8, anno 2025
+  const m = String(x.produzione || '').toLowerCase().match(/^([a-z]{3})-?(\d{2})$/);
+  return { matr: x.matricola, mese: m ? MESI.indexOf(m[1]) + 1 || null : null, anno: m ? 2000 + +m[2] : null };
+}
 const meseAnno = r => r.mese && r.anno ? MESI[r.mese - 1] + '-' + String(r.anno).slice(-2) : '—';
 async function controllaLotti() {
   const qui = {};                                     // lotto → [{k, i, r}]
   KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (RE_LOTTO_P.test(r.lotto || '')) (qui[r.lotto] = qui[r.lotto] || []).push({ k, i, r }); }));
   const lotti = Object.keys(qui); if (!lotti.length) return [];
-  const reg = await DB.lottiRegistrati(lotti, CUR.data);
+  const [registro, reg] = await Promise.all([DB.lottiRegistro(lotti), DB.lottiRegistrati(lotti, CUR.data)]);
   const out = [];
   lotti.forEach(l => {
     const righe = [], visti = new Set();
     qui[l].forEach(x => { const c = comboLotto(x.r); if (visti.has('q' + c)) return; visti.add('q' + c);
       righe.push({ quando: 'Questa giornata', dove: `${LAV[x.k].nome} riga ${x.i + 1}`, matr: x.r.matr || '—', ma: meseAnno(x.r), c, k: x.k, i: x.i }); });
-    reg.filter(x => x.lotto === l).forEach(x => { const c = comboLotto(x);
-      righe.push({ quando: 'Già registrato il ' + isoToIt(x.data), dove: `${LAV[x.lav] ? LAV[x.lav].nome : x.lav} riga ${x.riga}`, matr: x.matr || '—', ma: meseAnno(x), c }); });
+    const nelRegistro = registro.filter(x => x.lotto === l);
+    if (nelRegistro.length) {
+      // il Registro lotti è il riferimento ufficiale: confronto solo con lui
+      nelRegistro.forEach(x => { const d = daRegistro(x);
+        righe.push({ quando: 'Registro lotti', dove: `arrivo del ${isoToIt(x.data_arrivo)}${x.magazzino ? ' · ' + x.magazzino.toLowerCase() : ''}`, matr: x.matricola || '—', ma: meseAnno(d), c: comboLotto(d), ufficiale: true }); });
+    } else {
+      reg.filter(x => x.lotto === l).forEach(x => { const c = comboLotto(x);
+        righe.push({ quando: 'Già registrato il ' + isoToIt(x.data), dove: `${LAV[x.lav] ? LAV[x.lav].nome : x.lav} riga ${x.riga}`, matr: x.matr || '—', ma: meseAnno(x), c }); });
+    }
     const combos = new Set(righe.map(x => x.c));
     if (combos.size > 1) {
       const primo = righe.find(x => x.k) || {};
-      out.push({ lotto: l, k: primo.k, i: primo.i, righe });
+      out.push({ lotto: l, k: primo.k, i: primo.i, righe, registro: nelRegistro.length > 0 });
     }
   });
   return out;
 }
 function mostraConflittiLotti(confl) {
-  const diversa = (rr, f) => new Set(rr.map(x => x[f])).size > 1;
+  const diversa = (rr, f) => new Set(rr.map(x => f === 'matr' ? normMatr(x[f]).replace(/\s+/g, '') : x[f])).size > 1;
   apriModal(`<h2>Lotti con matricola o mese diversi</h2>
-    <p>Ogni lotto deve avere sempre la stessa matricola e lo stesso mese/anno. Correggi prima di salvare: clicca su una riga di <b>questa giornata</b> per andare alla cella.</p>
+    <p>Ogni lotto deve avere sempre la stessa matricola e lo stesso mese/anno. Se il lotto è nel <b>Registro lotti</b> (riga verde) vale quello. Correggi prima di salvare: clicca su una riga di <b>questa giornata</b> per andare alla cella.</p>
     <div style="max-height:55vh;overflow:auto">${confl.map((c, j) => {
       const dm = diversa(c.righe, 'matr'), da = diversa(c.righe, 'ma');
       return `<table class="list conf-lotto" style="width:100%;margin-bottom:14px"><thead><tr><th colspan="4" style="font-size:.95rem;color:var(--ink);background:#FDE7E6">Lotto ${esc(c.lotto)}</th></tr>
         <tr><th>Quando</th><th>Dove</th><th>Matricola</th><th>Mese-anno</th></tr></thead><tbody>
-        ${c.righe.map(x => `<tr${x.k ? ` class="vai" data-j="${j}" data-k="${x.k}" data-i="${x.i}" title="Vai alla cella"` : ''}><td>${x.k ? '<b>Questa giornata</b>' : esc(x.quando)}</td><td>${esc(x.dove)}</td>
+        ${c.righe.map(x => `<tr${x.k ? ` class="vai" data-j="${j}" data-k="${x.k}" data-i="${x.i}" title="Vai alla cella"` : ''}${x.ufficiale ? ' class="uff"' : ''}><td>${x.k ? '<b>Questa giornata</b>' : x.ufficiale ? '<b>Registro lotti</b> ✓' : esc(x.quando)}</td><td>${esc(x.dove)}</td>
           <td style="${dm ? 'color:var(--danger);font-weight:700' : ''}">${esc(x.matr)}</td><td style="${da ? 'color:var(--danger);font-weight:700' : ''}">${esc(x.ma)}</td></tr>`).join('')}
         </tbody></table>`; }).join('')}</div>
     <div class="modal-btns"><button class="btn" data-close>Chiudi</button></div>`);

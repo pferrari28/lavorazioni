@@ -80,3 +80,17 @@ language sql stable security invoker set search_path = public as $$
 $$;
 revoke all on function public.lav_lotti_registrati(text[], date) from anon, public;
 grant execute on function public.lav_lotti_registrati(text[], date) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Lotti del Registro lotti (riferimento ufficiale per il controllo) — 18/11/2026
+-- ---------------------------------------------------------------------
+create or replace function public.lav_lotti_registro(p_lotti text[])
+returns table(lotto text, matricola text, produzione text, data_arrivo date, magazzino text, prodotto text)
+language sql stable security invoker set search_path = public as $$
+  select l.anno::text || 'P' || l.progressivo, l.matricola, l.produzione, l.data_arrivo, l.magazzino, l.prodotto
+  from lotti l
+  where l.progressivo is not null and l.eliminato_il is null
+    and (l.anno::text || 'P' || l.progressivo) = any(p_lotti)
+$$;
+revoke all on function public.lav_lotti_registro(text[]) from anon, public;
+grant execute on function public.lav_lotti_registro(text[]) to authenticated;
