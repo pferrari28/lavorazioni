@@ -112,9 +112,8 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 .list th.thf .fil{font-size:.7rem;opacity:.45;margin-left:2px;}
 .list th.thf .fil.on{opacity:1;color:var(--link);}
 .list th.thf.attivo{background:#E7EEF6;color:var(--link);}
-.conf-lotto{table-layout:fixed;}
-.conf-lotto thead tr:last-child th:nth-child(1){width:36%;}
-.conf-lotto thead tr:last-child th:nth-child(2){width:28%;}
+.conf-lotto td,.conf-lotto thead tr:last-child th{white-space:nowrap;width:1%;padding-right:22px;}
+.conf-lotto td:nth-child(2),.conf-lotto thead tr:last-child th:nth-child(2){width:auto;}
 .conf-lotto tr.vai{cursor:pointer;}
 .conf-lotto tr.vai:hover td{background:#FFFBEA;}
 .filtro-pop{position:absolute;z-index:150;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.22);width:270px;padding:10px;font-size:.88rem;}
