@@ -80,6 +80,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 .sheet td.c input{text-align:center;}
 .sheet td.up input{text-transform:uppercase;}
 .sheet td.err{background:var(--danger-bg) !important;box-shadow:inset 0 0 0 2px var(--danger);}
+.sheet td.auto{background:#E6F4EC !important;transition:background .4s;}
 .sheet td.rosso{background:#FF9999 !important;}
 .sheet td.rosso input{font-weight:700;}
 .legend .lr::before{background:#FF9999;}
@@ -909,6 +910,38 @@ function onCella(e) {
   if (vuoto(v)) delete r[f]; else r[f] = v;
   inp.value = mostra(t, v);
   segnaModifica(); aggiornaControlli();
+  if (f === 'lotto' && RE_LOTTO_P.test(v || '')) compilaDaLotto(PAGE, i, v);
+}
+// compilazione automatica di matricola, mese e anno dal lotto
+const CACHE_LOTTI = new Map();   // lotto → {matr, mese, anno, fonte} oppure null
+async function datiLotto(l) {
+  if (CACHE_LOTTI.has(l)) return CACHE_LOTTI.get(l);
+  let ris = null;
+  const reg = await DB.lottiRegistro([l]);
+  if (reg.length) { const d = daRegistro(reg[0]); ris = { matr: normMatr(reg[0].matricola), mese: d.mese, anno: d.anno, fonte: 'registro', arrivo: reg[0].data_arrivo }; }
+  else {
+    const st = await DB.lottiRegistrati([l], null);
+    if (st.length === 1) ris = { matr: st[0].matr, mese: st[0].mese, anno: st[0].anno, fonte: 'giornate', data: st[0].data };
+  }
+  if (ris && ris.fonte === 'registro') CACHE_LOTTI.set(l, ris);   // in memoria solo i dati del registro (quelli delle giornate possono cambiare)
+  return ris;
+}
+async function compilaDaLotto(key, i, l) {
+  let d; try { d = await datiLotto(l); } catch (e) { return; }
+  if (!d || PAGE !== key || !CUR.data) return;
+  const r = CUR.dati[key].righe[i]; if (!r || r.lotto !== l) return;   // nel frattempo il lotto è cambiato
+  const campi = { matr: d.matr, mese: d.mese, anno: d.anno };
+  let cambiati = 0;
+  Object.entries(campi).forEach(([f, v]) => {
+    if (vuoto(v)) return;
+    if (d.fonte === 'giornate' && !vuoto(r[f])) return;             // dalle giornate: riempie solo i campi vuoti
+    if (r[f] !== v) { r[f] = v; cambiati++; }
+    const inp = document.querySelector(`#v-lav td[data-i="${i}"][data-f="${f}"] input`); if (inp) inp.value = mostra(inp.dataset.t, v);
+  });
+  if (!cambiati) return;
+  segnaModifica(); aggiornaControlli();
+  ['matr', 'mese', 'anno'].forEach(f => { const td = document.querySelector(`#v-lav td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.add('auto'); setTimeout(() => td.classList.remove('auto'), 1600); } });
+  toast(d.fonte === 'registro' ? `${l}: matricola ${d.matr}, ${meseAnno(d)} presi dal Registro lotti` : `${l}: matricola ${d.matr}, ${meseAnno(d)} presi dalla giornata del ${isoToIt(d.data)}`);
 }
 // completamento automatico (come Excel) delle parole del lotto già scritte più in alto nella colonna
 function onCompletaLotto(e) {
