@@ -104,6 +104,12 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 .sheet tr.hide{display:none;}
 .sheet td.sepcol{width:6px;min-width:6px;padding:0;background:#AEB8C2;border:0;}
 .addrow{margin:10px 0 0;display:flex;gap:10px;align-items:center;}
+.sheet td.sel{background-image:linear-gradient(rgba(31,111,235,.20),rgba(31,111,235,.20));outline:2px solid #1F6FEB;outline-offset:-2px;}
+.sheet.selmode{user-select:none;-webkit-user-select:none;cursor:cell;}
+.sheet.selmode input{pointer-events:none;}
+.selsum{position:fixed;z-index:190;background:#1F2A37;color:#fff;font-size:.84rem;padding:7px 11px;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.3);pointer-events:none;white-space:nowrap;}
+.selsum b{font-size:.98rem;margin-left:3px;}
+.selsum span{opacity:.75;margin-left:10px;}
 .tip{position:fixed;z-index:200;background:var(--danger);color:#fff;font-size:.8rem;font-weight:600;padding:6px 9px;border-radius:5px;max-width:320px;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.25);}
 .tip.w{background:#8A5A00;}
 .legend{font-size:.8rem;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;}
@@ -215,6 +221,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 <div class="modal" id="modal"><div class="modal-card" id="modal-card"></div></div>
 <div class="toast" id="toast"></div>
 <div class="tip" id="tip" hidden></div>
+<div class="selsum" id="selsum" hidden></div>
 
 <script>
 'use strict';
@@ -924,6 +931,7 @@ function mostraErrori(errs, titolo) {
 
 // ---------- pagine di compilazione ----------
 function renderLav() {
+  azzeraSelezione();
   if (!CUR.data) {
     $('v-lav').innerHTML = `<div class="page-title"><h2>${LAV[PAGE].nome.toUpperCase()}</h2></div><div class="panel"><div class="empty" style="font-size:1.05rem">Per iniziare inserisci in alto la <b>Data produzione</b> delle schede che devi registrare.</div><div id="bozze-box"></div></div>`;
     mostraBozze($('bozze-box'));
@@ -966,6 +974,7 @@ function renderLav() {
   sh.addEventListener('keydown', onTasto);
   sh.addEventListener('input', onCompletaLotto);
   sh.addEventListener('click', onClickCella);
+  attivaSelezione(sh);
   sh.addEventListener('mouseover', onHover);
   sh.addEventListener('mouseout', () => { $('tip').hidden = true; });
   sh.addEventListener('focusin', onHover);
@@ -1060,6 +1069,71 @@ function onCompletaLotto(e) {
   inp.value = cand[0];
   inp.setSelectionRange(scritto.length, cand[0].length);   // la parte proposta resta selezionata: continui a scrivere o confermi con Invio/Tab
 }
+// selezione di più celle col mouse (trascinando o Maiusc+clic): somma, media e conteggio in una nuvoletta, come in Excel
+const SEL = { a: null, b: null, on: false, drag: false };
+function celleDati(sh) { return [...sh.querySelectorAll('tbody td[data-i][data-f]')]; }
+function azzeraSelezione() {
+  SEL.a = SEL.b = null; SEL.on = false; SEL.drag = false;
+  document.querySelectorAll('.sheet td.sel').forEach(td => td.classList.remove('sel'));
+  const sh = document.getElementById('sheet'); if (sh) sh.classList.remove('selmode');
+  const c = document.getElementById('selsum'); if (c) c.hidden = true;
+}
+function valoreCella(td) {
+  const inp = td.querySelector('input');
+  if (inp) { if (!['kg', 'int'].includes(inp.dataset.t)) return null; const n = parseNum(inp.value); return typeof n === 'number' && !isNaN(n) ? n : null; }
+  if (td.classList.contains('calc')) { const n = parseNum(td.textContent.replace('−', '-')); return typeof n === 'number' && !isNaN(n) ? n : null; }
+  return null;
+}
+function coordCella(td) { const tr = td.parentElement; return { r: [...tr.parentElement.children].indexOf(tr), c: [...tr.children].indexOf(td) }; }
+function disegnaSelezione() {
+  const sh = document.getElementById('sheet'); if (!sh || !SEL.a || !SEL.b) return;
+  const A = coordCella(SEL.a), B = coordCella(SEL.b);
+  const r1 = Math.min(A.r, B.r), r2 = Math.max(A.r, B.r), c1 = Math.min(A.c, B.c), c2 = Math.max(A.c, B.c);
+  let somma = 0, n = 0, tot = 0, ultima = SEL.b;
+  celleDati(sh).forEach(td => {
+    const k = coordCella(td), dentro = k.r >= r1 && k.r <= r2 && k.c >= c1 && k.c <= c2 && !td.parentElement.classList.contains('hide');
+    td.classList.toggle('sel', dentro);
+    if (!dentro) return;
+    tot++;
+    const v = valoreCella(td); if (v !== null) { somma += v; n++; }
+  });
+  const chip = document.getElementById('selsum');
+  if (tot < 2 || !n) { chip.hidden = true; return; }
+  chip.innerHTML = `Somma <b>${fmtKg2(somma)}</b><span>${n} valori · media ${fmtKg2(somma / n)}</span>`;
+  chip.hidden = false;
+  const rc = ultima.getBoundingClientRect(), w = chip.offsetWidth, h = chip.offsetHeight;
+  let x = rc.right + 8, y = rc.bottom + 6;
+  if (x + w > innerWidth - 8) x = Math.max(8, rc.left - w - 8);
+  if (y + h > innerHeight - 8) y = Math.max(8, rc.top - h - 6);
+  chip.style.left = x + 'px'; chip.style.top = y + 'px';
+}
+function attivaSelezione(sh) {
+  sh.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const td = e.target.closest('tbody td[data-i][data-f]');
+    if (e.shiftKey && SEL.a && td) {                       // Maiusc+clic: estende dalla cella di partenza
+      e.preventDefault(); if (document.activeElement) document.activeElement.blur();
+      SEL.b = td; SEL.on = true; sh.classList.add('selmode'); disegnaSelezione(); return;
+    }
+    azzeraSelezione();
+    if (td) { SEL.a = td; SEL.drag = true; }
+  });
+  sh.addEventListener('mousemove', e => {
+    if (!SEL.drag || !(e.buttons & 1)) return;
+    const td = e.target.closest('tbody td[data-i][data-f]'); if (!td) return;
+    if (!SEL.on) {
+      if (td === SEL.a) return;                            // ancora dentro la stessa cella: è la normale selezione del testo
+      SEL.on = true; sh.classList.add('selmode');
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      getSelection().removeAllRanges();
+    }
+    SEL.b = td; disegnaSelezione();
+  });
+  const wrap = sh.parentElement;
+  wrap.addEventListener('scroll', () => { if (SEL.on) disegnaSelezione(); });
+}
+document.addEventListener('mouseup', () => { SEL.drag = false; });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && SEL.on) azzeraSelezione(); });
 function onClickCella(e) {
   const td = e.target.closest('td.chk'); if (!td) return;
   const r = CUR.dati[PAGE].righe[+td.dataset.i];
