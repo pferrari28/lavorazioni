@@ -257,7 +257,7 @@ const KEYS = Object.keys(LAV);
 const ORDINE_RIEP = ['scrostatura', 'spiattatura', 'grattugiato', 'scaglie', 'cubetti'];
 const NOME_RIEP = { scrostatura: 'Scrostatura', spiattatura: 'Spiattatura', grattugiato: 'Grattugia', scaglie: 'Scaglie', cubetti: 'Cubetti' };
 const FASCE = [['nd', 'Senza stagionatura dichiarata'], ['12', 'da 12 a 18 mesi'], ['19', 'da 19 a 24 mesi'], ['25', 'da 25 a 30 mesi'], ['31', 'da 31 a 36 mesi'], ['37', '37 mesi e oltre']];
-const MEDIA_MIN = 34, MEDIA_MAX = 44;
+const MEDIA_MIN = 34, MEDIA_MAX = 44.7;
 
 // tipi di campo: t = lotto | matr | mese | anno | int | kg | orig | rif | text | data | chk
 function colonne(key) {
@@ -641,7 +641,7 @@ function controllaRiga(key, righe, i) {
     const pf = ['pesoPF', 'sfridi', 'cat3'].some(k => !vuoto(r[k]));
     if (pf && vuoto(r.peso)) E.peso = E.peso || 'Manca il peso delle forme in ingresso';
     const med = media(r);
-    if (med != null && (med < MEDIA_MIN || med > MEDIA_MAX)) W.media = 'Media forme fuori da ' + MEDIA_MIN + '–' + MEDIA_MAX + ' kg';
+    if (med != null && (med < MEDIA_MIN || med > MEDIA_MAX)) W.media = 'Media forme fuori da ' + MEDIA_MIN + '–' + String(MEDIA_MAX).replace('.', ',') + ' kg';
     const rim = rimanente(key, r);
     if (rim != null && rim < -0.0001) E.rim = 'Prodotto + sfridi' + (L.cat3 ? ' + cat. 3' : '') + ' superano il peso in ingresso';
   }
