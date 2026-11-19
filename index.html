@@ -542,6 +542,8 @@ function dataTestata(key, cur) { return isoToIt(cur.data); }
 const lottoGiornata = iso => +iso.slice(8, 10) + '-' + MESI[+iso.slice(5, 7) - 1];
 const PF_DATI = ['rif', 'marchio', 'stag', 'pezzi', 'pesoPF', 'sfridi', 'cat3'];
 const haPFdati = r => PF_DATI.some(k => !vuoto(r[k]));
+// lotto del prodotto finito (data di produzione): nelle schede con il marchio compare solo se il marchio è scritto
+const haLottoPF = (key, r) => LAV[key].tipo === 'A' ? !vuoto(r.marchio) : haPFdati(r);
 function rifRighe(s) {
   const out = [];
   for (const p of String(s).split(',')) {
@@ -1187,7 +1189,7 @@ function aggiornaControlli() {
     if (tr) { tr.classList.toggle('vietato', !!v); tr.title = v ? 'Prodotto non ammesso: ' + v : ''; }
   });
   rr.forEach((r, i) => {
-    const lp = sh.querySelector(`td[data-i="${i}"][data-f="lottoPF"]`); if (lp) lp.textContent = haPFdati(r) ? lottoGiornata(CUR.data) : '';
+    const lp = sh.querySelector(`td[data-i="${i}"][data-f="lottoPF"]`); if (lp) lp.textContent = haLottoPF(key, r) ? lottoGiornata(CUR.data) : '';
     const { E, W, R } = controllaRiga(key, rr, i);
     for (const [f, m] of Object.entries(R)) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.add('rosso'); td.dataset.msg = m; } }
     for (const [f, m] of Object.entries(W)) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.add('warn'); td.dataset.msg = m; } }
@@ -1403,7 +1405,7 @@ function righeRiepilogo(k, giornate) {
     const D = g.dati[k]; if (!D) return;
     (D.righe || []).forEach((r, i) => {
       if (!rigaUsata(r)) return;
-      const o = Object.assign({}, r, { data: g.data, n: i + 1, linea: D.linea || '', lottoPF: haPFdati(r) ? lottoGiornata(g.data) : '' });
+      const o = Object.assign({}, r, { data: g.data, n: i + 1, linea: D.linea || '', lottoPF: haLottoPF(k, r) ? lottoGiornata(g.data) : '' });
       if (LAV[k].tipo === 'B') { const m = media(r); o.media = m == null ? '' : Math.round(m * 10) / 10; o.rim = rimanente(k, r); }
       out.push(o);
     });
@@ -1643,14 +1645,14 @@ function valoriExcel(k, r, iso) {
     if (!vuoto(r.marchio)) v.M = S(r.marchio);
     if (!vuoto(r.stag)) v.N = N(r.stag);
     if (!vuoto(r.pezzi)) v.O = N(r.pezzi);
-    if (haPFdati(r)) v.P = data(lottoGiornata(iso));
+    if (haLottoPF(k, r)) v.P = data(lottoGiornata(iso));
     if (!vuoto(r.pesoPF)) v.Q = N(r.pesoPF);
     if (!vuoto(r.sfridi)) v.R = N(r.sfridi);
     if (!vuoto(r.cat3)) v.S = N(r.cat3);
     const note = [r.piatti ? 'PIATTI' : '', r.note || ''].filter(Boolean).join(' ');
     if (note) v.T = S(note);
   } else {
-    if (haPFdati(r)) v.K = data(lottoGiornata(iso));
+    if (haLottoPF(k, r)) v.K = data(lottoGiornata(iso));
     if (!vuoto(r.pesoPF)) v.L = N(r.pesoPF);
     if (!vuoto(r.sfridi)) v.M = N(r.sfridi);
     if (L.cat3 && !vuoto(r.cat3)) v.N = N(r.cat3);
