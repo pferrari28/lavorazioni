@@ -557,8 +557,9 @@ function analisiRif(key, rr, iso) {
   rr.forEach((r, i) => {
     if (!(typeof r.stag === 'number' && r.stag > 12) || vuoto(r.rif)) return;
     const lst = rifRighe(r.rif); if (!lst) return;
-    const mp = lst.filter(n => rr[n - 1] && MP_KEYS.some(k => k !== 'piatti' && !vuoto(rr[n - 1][k])) && rr[n - 1].lotto !== 'RESIDUO');
-    pf.push({ i, r, mp });
+    const mpTutte = lst.filter(n => rr[n - 1] && MP_KEYS.some(k => k !== 'piatti' && !vuoto(rr[n - 1][k])));   // per i kg contano anche i RESIDUO
+    const mp = mpTutte.filter(n => rr[n - 1].lotto !== 'RESIDUO');                                            // per i mesi no
+    pf.push({ i, r, mp, kg: mpTutte });
     // 1) stagionatura: ogni materia prima deve avere almeno i mesi dichiarati (per i 24 mesi va bene anche un mese in meno)
     const minimo = r.stag === 24 ? 23 : r.stag;
     const giovani = mp.map(n => ({ n, eta: etaMesi(rr[n - 1], iso) })).filter(x => x.eta != null && x.eta < minimo);
@@ -569,12 +570,12 @@ function analisiRif(key, rr, iso) {
   });
   // 2) i kg della materia prima devono coprire il prodotto finito (le righe in comune si dividono tra più prodotti)
   const resto = {}; rr.forEach((r, i) => { resto[i + 1] = kgMP(r); });
-  pf.slice().sort((a, b) => Math.max(0, ...a.mp) - Math.max(0, ...b.mp) || a.i - b.i).forEach(p => {
+  pf.slice().sort((a, b) => Math.max(0, ...a.kg) - Math.max(0, ...b.kg) || a.i - b.i).forEach(p => {
     let serve = typeof p.r.pesoPF === 'number' ? p.r.pesoPF : 0;
-    p.mp.slice().sort((a, b) => a - b).forEach(n => { const q = Math.min(resto[n], serve); resto[n] -= q; serve -= q; });
+    p.kg.slice().sort((a, b) => a - b).forEach(n => { const q = Math.min(resto[n], serve); resto[n] -= q; serve -= q; });
     if (serve > 0.001) {
-      const tot = p.mp.reduce((t, n) => t + kgMP(rr[n - 1]), 0);
-      out.push({ i: p.i, f: 'rif', msg: `Materia prima insufficiente: mancano ${fmtKg2(serve)} kg per ${fmtKg2(p.r.pesoPF)} kg di prodotto finito (righe ${p.r.rif}: ${fmtKg2(tot)} kg${p.mp.some(n => pf.some(q => q !== p && q.mp.includes(n))) ? ', in parte già usati da altri prodotti' : ''})` });
+      const tot = p.kg.reduce((t, n) => t + kgMP(rr[n - 1]), 0);
+      out.push({ i: p.i, f: 'rif', msg: `Materia prima insufficiente: mancano ${fmtKg2(serve)} kg per ${fmtKg2(p.r.pesoPF)} kg di prodotto finito (righe ${p.r.rif}: ${fmtKg2(tot)} kg${p.kg.some(n => pf.some(q => q !== p && q.kg.includes(n))) ? ', in parte già usati da altri prodotti' : ''})` });
       if (!vuoto(p.r.pesoPF)) out.push({ i: p.i, f: 'pesoPF', msg: `Mancano ${fmtKg2(serve)} kg di materia prima (riferimento ${p.r.rif})` });
     }
   });
