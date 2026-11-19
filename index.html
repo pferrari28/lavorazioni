@@ -1037,11 +1037,8 @@ async function datiLotto(l) {
   const reg = await DB.lottiRegistro([l]);
   if (reg.length) PRODOTTO_LOTTO.set(l, reg[0].prodotto || ''); else PRODOTTO_LOTTO.set(l, '');
   if (reg.length) { const d = daRegistro(reg[0]); ris = { matr: normMatr(reg[0].matricola), mese: d.mese, anno: d.anno, fonte: 'registro', arrivo: reg[0].data_arrivo }; }
-  else {
-    const st = await DB.lottiRegistrati([l], null);
-    if (st.length === 1) ris = { matr: st[0].matr, mese: st[0].mese, anno: st[0].anno, fonte: 'giornate', data: st[0].data };
-  }
-  if (ris && ris.fonte === 'registro') CACHE_LOTTI.set(l, ris);   // in memoria solo i dati del registro (quelli delle giornate possono cambiare)
+  // compilazione automatica solo e soltanto dal Registro lotti (non dalle giornate salvate)
+  if (ris) CACHE_LOTTI.set(l, ris);
   return ris;
 }
 async function compilaDaLotto(key, i, l) {
