@@ -543,6 +543,43 @@ function rifRighe(s) {
   }
   return out;
 }
+// ---------- controlli sul riferimento materia prima (Grattugiato, Scaglie, Cubetti; stagionatura oltre 12 mesi) ----------
+// età come nel programma di magazzino: mesi compiuti a fine mese (a novembre 2026 ottobre 2024 ha 24 mesi)
+function etaMesi(r, iso) {
+  if (typeof r.mese !== 'number' || typeof r.anno !== 'number') return null;
+  return (+iso.slice(0, 4) * 12 + +iso.slice(5, 7)) - (r.anno * 12 + r.mese) - 1;
+}
+const kgMP = r => (typeof r.peso === 'number' ? r.peso : 0) + (typeof r.pesoOrig === 'number' ? r.pesoOrig : 0);
+function analisiRif(key, rr, iso) {
+  const out = [];                                     // {i, f, msg} → celle gialle e avviso al salvataggio
+  if (LAV[key].tipo !== 'A' || !iso) return out;
+  const pf = [];
+  rr.forEach((r, i) => {
+    if (!(typeof r.stag === 'number' && r.stag > 12) || vuoto(r.rif)) return;
+    const lst = rifRighe(r.rif); if (!lst) return;
+    const mp = lst.filter(n => rr[n - 1] && MP_KEYS.some(k => k !== 'piatti' && !vuoto(rr[n - 1][k])) && rr[n - 1].lotto !== 'RESIDUO');
+    pf.push({ i, r, mp });
+    // 1) stagionatura: ogni materia prima deve avere almeno i mesi dichiarati (per i 24 mesi va bene anche un mese in meno)
+    const minimo = r.stag === 24 ? 23 : r.stag;
+    const giovani = mp.map(n => ({ n, eta: etaMesi(rr[n - 1], iso) })).filter(x => x.eta != null && x.eta < minimo);
+    if (giovani.length) {
+      out.push({ i, f: 'stag', msg: `Stagionatura ${r.stag} mesi, ma la materia prima ${giovani.map(x => `riga ${x.n} ha ${x.eta} mesi`).join(', ')}` });
+      giovani.forEach(x => out.push({ i: x.n - 1, f: 'anno', msg: `Ha ${x.eta} mesi: usata per un prodotto a ${r.stag} mesi (riga ${i + 1})` }));
+    }
+  });
+  // 2) i kg della materia prima devono coprire il prodotto finito (le righe in comune si dividono tra più prodotti)
+  const resto = {}; rr.forEach((r, i) => { resto[i + 1] = kgMP(r); });
+  pf.slice().sort((a, b) => Math.max(0, ...a.mp) - Math.max(0, ...b.mp) || a.i - b.i).forEach(p => {
+    let serve = typeof p.r.pesoPF === 'number' ? p.r.pesoPF : 0;
+    p.mp.slice().sort((a, b) => a - b).forEach(n => { const q = Math.min(resto[n], serve); resto[n] -= q; serve -= q; });
+    if (serve > 0.001) {
+      const tot = p.mp.reduce((t, n) => t + kgMP(rr[n - 1]), 0);
+      out.push({ i: p.i, f: 'rif', msg: `Materia prima insufficiente: mancano ${fmtKg2(serve)} kg per ${fmtKg2(p.r.pesoPF)} kg di prodotto finito (righe ${p.r.rif}: ${fmtKg2(tot)} kg${p.mp.some(n => pf.some(q => q !== p && q.mp.includes(n))) ? ', in parte già usati da altri prodotti' : ''})` });
+      if (!vuoto(p.r.pesoPF)) out.push({ i: p.i, f: 'pesoPF', msg: `Mancano ${fmtKg2(serve)} kg di materia prima (riferimento ${p.r.rif})` });
+    }
+  });
+  return out;
+}
 function controllaRiga(key, righe, i) {
   const L = LAV[key], r = righe[i], E = {}, W = {}, R = {};
   if (!rigaUsata(r)) return { E, W, R };
@@ -752,6 +789,12 @@ async function salvaGiornata() {
   let confl;
   try { confl = await controllaLotti(); } catch (e) { toast('Controllo lotti non riuscito: ' + e.message, true); return false; }
   if (confl.length) { mostraConflittiLotti(confl); return false; }
+  const avvRif = [];
+  KEYS.forEach(k => analisiRif(k, CUR.dati[k].righe, CUR.data).filter(a => a.f !== 'anno' && a.f !== 'pesoPF').forEach(a => avvRif.push(`<li><b>${LAV[k].nome} · riga ${a.i + 1}</b> ${esc(a.msg)}</li>`)));
+  if (avvRif.length) {
+    const ok = await chiedi('Controllo materia prima', `Ci sono prodotti con stagionatura dichiarata da controllare (celle gialle):<ul class="errlist" style="margin-top:10px">${avvRif.slice(0, 50).join('')}</ul><p style="margin-top:12px">Vuoi salvare comunque?</p>`, 'Sì, salva comunque', 'Torna indietro');
+    if (!ok) return false;
+  }
   await caricaProdotti(KEYS.flatMap(k => CUR.dati[k].righe.map(r => r.lotto)));
   const vietati = [];
   KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { const v = prodottoVietato(r); if (v) vietati.push(`<li><b>${LAV[k].nome} · riga ${i + 1}</b> lotto ${esc(r.lotto || '—')}: ${esc(v)}</li>`); }));
@@ -1073,6 +1116,12 @@ function aggiornaControlli() {
       const rm = sh.querySelector(`td[data-i="${i}"][data-f="rim"]`), x = rimanente(key, r);
       if (rm) { rm.textContent = x == null ? '' : fmtKg2(x); rm.classList.toggle('neg', x != null && x < -0.0001); rm.classList.toggle('zero', x != null && Math.abs(x) < 0.0001); }
     }
+  });
+  analisiRif(key, rr, CUR.data).forEach(a => {
+    const td = sh.querySelector(`td[data-i="${a.i}"][data-f="${a.f}"]`);
+    if (!td || td.classList.contains('err')) return;
+    const prima = td.classList.contains('warn') || td.classList.contains('rosso') ? td.dataset.msg : '';
+    td.classList.remove('rosso'); td.classList.add('warn'); td.dataset.msg = prima && prima !== a.msg ? prima + ' · ' + a.msg : a.msg;
   });
   // totali
   sh.querySelectorAll('tfoot td[data-tot]').forEach(td => {
