@@ -1071,11 +1071,11 @@ function onCompletaLotto(e) {
   inp.value = cand[0];
   inp.setSelectionRange(scritto.length, cand[0].length);   // la parte proposta resta selezionata: continui a scrivere o confermi con Invio/Tab
 }
-// selezione di più celle col mouse (trascinando o Maiusc+clic): somma, media e conteggio in una nuvoletta, come in Excel
-const SEL = { a: null, b: null, on: false, drag: false };
+// selezione di più celle col mouse (trascinando, Maiusc+clic, oppure CTRL+trascinamento/clic per aggiungere celle staccate): somma, media e conteggio in una nuvoletta, come in Excel
+const SEL = { a: null, b: null, on: false, drag: false, ctrl: false, keep: new Set() };
 function celleDati(sh) { return [...sh.querySelectorAll('tbody td[data-i][data-f]')]; }
 function azzeraSelezione() {
-  SEL.a = SEL.b = null; SEL.on = false; SEL.drag = false;
+  SEL.a = SEL.b = null; SEL.on = false; SEL.drag = false; SEL.ctrl = false; SEL.keep = new Set();
   document.querySelectorAll('.sheet td.sel').forEach(td => td.classList.remove('sel'));
   document.querySelectorAll('.sheet td.n.on').forEach(td => td.classList.remove('on'));
   const sh = document.getElementById('sheet'); if (sh) sh.classList.remove('selmode');
@@ -1089,24 +1089,28 @@ function valoreCella(td) {
 }
 function coordCella(td) { const tr = td.parentElement; return { r: [...tr.parentElement.children].indexOf(tr), c: [...tr.children].indexOf(td) }; }
 function disegnaSelezione() {
-  const sh = document.getElementById('sheet'); if (!sh || !SEL.a || !SEL.b) return;
-  const A = coordCella(SEL.a), B = coordCella(SEL.b);
-  const r1 = Math.min(A.r, B.r), r2 = Math.max(A.r, B.r), c1 = Math.min(A.c, B.c), c2 = Math.max(A.c, B.c);
-  let somma = 0, n = 0, tot = 0, ultima = SEL.b;
+  const sh = document.getElementById('sheet'); if (!sh) return;
+  const scelte = new Set([...SEL.keep].filter(td => td.isConnected));
+  if (SEL.on && SEL.a && SEL.b) {
+    const A = coordCella(SEL.a), B = coordCella(SEL.b);
+    const r1 = Math.min(A.r, B.r), r2 = Math.max(A.r, B.r), c1 = Math.min(A.c, B.c), c2 = Math.max(A.c, B.c);
+    celleDati(sh).forEach(td => { const k = coordCella(td); if (k.r >= r1 && k.r <= r2 && k.c >= c1 && k.c <= c2) scelte.add(td); });
+  }
   sh.querySelectorAll('td.n.on').forEach(n => n.classList.remove('on'));
+  let somma = 0, n = 0, tot = 0, ultimaSel = null;
   celleDati(sh).forEach(td => {
-    const k = coordCella(td), dentro = k.r >= r1 && k.r <= r2 && k.c >= c1 && k.c <= c2 && !td.parentElement.classList.contains('hide');
+    const dentro = scelte.has(td) && !td.parentElement.classList.contains('hide');
     td.classList.toggle('sel', dentro);
     if (!dentro) return;
     td.parentElement.firstElementChild.classList.add('on');
-    tot++;
+    tot++; ultimaSel = td;
     const v = valoreCella(td); if (v !== null) { somma += v; n++; }
   });
   const chip = document.getElementById('selsum');
   if (tot < 2 || !n) { chip.hidden = true; return; }
   chip.innerHTML = `Somma <b>${fmtKg2(somma)}</b><span>${n} valori · media ${fmtKg2(somma / n)}</span>`;
   chip.hidden = false;
-  const rc = ultima.getBoundingClientRect(), w = chip.offsetWidth, h = chip.offsetHeight;
+  const ultima = SEL.b || SEL.a || ultimaSel, rc = ultima.getBoundingClientRect(), w = chip.offsetWidth, h = chip.offsetHeight;
   let x = rc.right + 8, y = rc.bottom + 6;
   if (x + w > innerWidth - 8) x = Math.max(8, rc.left - w - 8);
   if (y + h > innerHeight - 8) y = Math.max(8, rc.top - h - 6);
@@ -1116,11 +1120,21 @@ function attivaSelezione(sh) {
   sh.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     const td = e.target.closest('tbody td[data-i][data-f]');
+    if ((e.ctrlKey || e.metaKey) && td) {                  // CTRL: aggiunge alla selezione (celle o gruppi di celle staccati)
+      e.preventDefault();
+      const att = document.activeElement && document.activeElement.closest ? document.activeElement.closest('tbody td[data-i][data-f]') : null;
+      if (!sh.classList.contains('selmode') && att && att !== td) SEL.keep.add(att);          // la cella dove stavi scrivendo fa parte della selezione
+      sh.querySelectorAll('td.sel').forEach(c => SEL.keep.add(c));                          // conferma quanto già selezionato
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      getSelection().removeAllRanges();
+      SEL.on = false; SEL.a = td; SEL.b = td; SEL.drag = true; SEL.ctrl = true;
+      sh.classList.add('selmode'); return;
+    }
     if (e.shiftKey && SEL.a && td) {                       // Maiusc+clic: estende dalla cella di partenza
       e.preventDefault(); if (document.activeElement) document.activeElement.blur();
       SEL.b = td; SEL.on = true; sh.classList.add('selmode'); disegnaSelezione(); return;
     }
-    const eraSel = SEL.on;
+    const eraSel = sh.classList.contains('selmode');
     azzeraSelezione();
     if (td) { SEL.a = td; SEL.drag = true; if (eraSel && e.target === td) { const i = td.querySelector('input'); if (i) { e.preventDefault(); i.focus(); } } }
   });
@@ -1136,9 +1150,17 @@ function attivaSelezione(sh) {
     SEL.b = td; disegnaSelezione();
   });
   const wrap = sh.parentElement;
-  wrap.addEventListener('scroll', () => { if (SEL.on) disegnaSelezione(); });
+  wrap.addEventListener('scroll', () => { if (SEL.on || SEL.keep.size) disegnaSelezione(); });
 }
-document.addEventListener('mouseup', () => { SEL.drag = false; });
+document.addEventListener('mouseup', () => {
+  if (SEL.drag && SEL.ctrl && !SEL.on && SEL.a) {          // CTRL+clic senza trascinare: aggiunge o toglie la singola cella
+    if (SEL.keep.has(SEL.a)) SEL.keep.delete(SEL.a); else SEL.keep.add(SEL.a);
+    SEL.a = SEL.b = null;
+    const sh = document.getElementById('sheet');
+    if (!SEL.keep.size) azzeraSelezione(); else if (sh) disegnaSelezione();
+  } else if (SEL.drag && SEL.ctrl && SEL.on) { SEL.keep = new Set([...SEL.keep]); }
+  SEL.drag = false; SEL.ctrl = false;
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && SEL.on) azzeraSelezione(); });
 function onClickCella(e) {
   const td = e.target.closest('td.chk'); if (!td) return;
