@@ -1009,6 +1009,7 @@ function onCella(e) {
   inp.value = mostra(t, v);
   segnaModifica(); aggiornaControlli();
   if (f === 'lotto' && RE_LOTTO_P.test(v || '')) compilaDaLotto(PAGE, i, v);
+  else if (['matr', 'mese', 'anno'].includes(f) && RE_LOTTO_P.test(r.lotto || '')) compilaDaLotto(PAGE, i, r.lotto);
 }
 // prodotto del lotto (dal Registro lotti): ammessi solo Parmigiano Reggiano, Mezzano e Biologico
 const PRODOTTO_LOTTO = new Map();   // lotto → prodotto del registro, oppure '' se il lotto non è nel registro
@@ -1041,11 +1042,28 @@ async function datiLotto(l) {
   if (ris) CACHE_LOTTI.set(l, ris);
   return ris;
 }
+// compilazione automatica di matricola e mese/anno dal Registro lotti: SOSPESA (da riattivare quando i lotti saranno quasi tutti a registro)
+const AUTOCOMPILA = false;
+// se il lotto è nel Registro lotti e la riga riporta matricola o mese/anno diversi → errore (solo sui campi scritti)
+function erroriRegistro(r) {
+  const d = r && r.lotto ? CACHE_LOTTI.get(r.lotto) : null, out = {};
+  if (!d || d.fonte !== 'registro') return out;
+  const nm = x => normMatr(x).replace(/\s+/g, '');
+  if (!vuoto(r.matr) && !vuoto(d.matr) && nm(r.matr) !== nm(d.matr)) out.matr = `Nel Registro lotti il ${r.lotto} ha matricola ${d.matr}`;
+  if (typeof r.mese === 'number' && !vuoto(d.mese) && r.mese !== d.mese) out.mese = `Nel Registro lotti il ${r.lotto} è ${meseAnno(d)}`;
+  if (typeof r.anno === 'number' && !vuoto(d.anno) && r.anno !== d.anno) out.anno = `Nel Registro lotti il ${r.lotto} è ${meseAnno(d)}`;
+  return out;
+}
 async function compilaDaLotto(key, i, l) {
   let d; try { d = await datiLotto(l); } catch (e) { return; }
   if (PAGE === key) aggiornaControlli();
   if (!d || PAGE !== key || !CUR.data) return;
   const r = CUR.dati[key].righe[i]; if (!r || r.lotto !== l) return;   // nel frattempo il lotto è cambiato
+  if (!AUTOCOMPILA) {
+    const er = erroriRegistro(r), m = Object.values(er);
+    if (m.length) toast(`Errore: ${l} non corrisponde al Registro lotti (${[...new Set(m)].join(' · ')}). Correggi prima di salvare.`, true);
+    return;
+  }
   const campi = { matr: d.matr, mese: d.mese, anno: d.anno };
   let cambiati = 0;
   Object.entries(campi).forEach(([f, v]) => {
@@ -1213,6 +1231,7 @@ function aggiornaControlli() {
     for (const [f, m] of Object.entries(R)) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.add('rosso'); td.dataset.msg = m; } }
     for (const [f, m] of Object.entries(W)) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.add('warn'); td.dataset.msg = m; } }
     for (const [f, m] of Object.entries(E)) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.remove('warn'); td.classList.add('err'); td.dataset.msg = m; } }
+    for (const [f, m] of Object.entries(erroriRegistro(r))) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.remove('warn', 'rosso'); td.classList.add('err'); td.dataset.msg = m; } }
     if (L.tipo === 'B') {
       const md = sh.querySelector(`td[data-i="${i}"][data-f="media"]`), m = media(r);
       if (md) md.textContent = m == null ? '' : m.toLocaleString('it-IT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
