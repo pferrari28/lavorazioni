@@ -982,7 +982,9 @@ function renderLav() {
   sh.addEventListener('focusout', () => { if (!SEL.on) sh.querySelectorAll('td.n.on').forEach(n => n.classList.remove('on')); });
   sh.addEventListener('mouseover', onHover);
   sh.addEventListener('mouseout', () => { $('tip').hidden = true; });
-  sh.addEventListener('focusin', onHover);
+  // la didascalia dell'errore compare solo passando col mouse; mentre si compila (focus o tastiera) resta nascosta
+  sh.addEventListener('focusin', () => { $('tip').hidden = true; });
+  sh.addEventListener('keydown', () => { $('tip').hidden = true; });
   sh.addEventListener('focusout', () => { $('tip').hidden = true; });
   $('add-righe').addEventListener('click', () => { for (let j = 0; j < 10; j++) D.righe.push({}); segnaModifica(); renderLav(); });
   $('cerca').addEventListener('input', e => { SEARCH[key] = e.target.value; applicaRicerca(); });
