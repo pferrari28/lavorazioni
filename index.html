@@ -890,9 +890,21 @@ function daRegistro(x) {                                // produzione "AGO-25" �
 }
 const meseAnno = r => r.mese && r.anno ? MESI[r.mese - 1] + '-' + String(r.anno).slice(-2) : '—';
 // righe della giornata coinvolte in un conflitto lotto/matricola/mese-anno (evidenziate finché non le correggi)
-let CONFL = new Set(), CONFL_DATA = null;
+let CONFL = new Set(), CONFL_DATA = null, CONFL_REF = new Map();   // CONFL_REF: lotto → combinazioni di riferimento (Registro o giornate già salvate)
+// dopo una correzione: rivede tutti i lotti in conflitto; se ora quadrano, toglie l'evidenziazione a tutte le loro righe
+function ricalcolaConfl() {
+  if (CONFL_DATA !== (CUR && CUR.data)) return;
+  const nuove = new Set();
+  CONFL_REF.forEach((ref, l) => {
+    const righe = [];
+    chiavi(CUR.dati).forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (r.lotto === l) righe.push(k + '|' + i + '|' + comboLotto(r)); }));
+    const combos = new Set([...ref, ...righe.map(x => x.split('|').slice(2).join('|'))]);
+    if (combos.size > 1) righe.forEach(x => nuove.add(x.split('|').slice(0, 2).join('|')));
+  });
+  CONFL = nuove;
+}
 async function controllaLotti() {
-  CONFL = new Set(); CONFL_DATA = CUR.data;
+  CONFL = new Set(); CONFL_DATA = CUR.data; CONFL_REF = new Map();
   const qui = {};                                     // lotto → [{k, i, r}]
   chiavi(CUR.dati).forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (RE_LOTTO_P.test(r.lotto || '')) (qui[r.lotto] = qui[r.lotto] || []).push({ k, i, r }); }));
   const lotti = Object.keys(qui); if (!lotti.length) return [];
@@ -916,6 +928,7 @@ async function controllaLotti() {
       const primo = righe.find(x => x.k) || {};
       out.push({ lotto: l, k: primo.k, i: primo.i, righe, registro: nelRegistro.length > 0 });
       qui[l].forEach(x => CONFL.add(x.k + '|' + x.i));
+      CONFL_REF.set(l, new Set(righe.filter(x => !x.k).map(x => x.c)));
     }
   });
   return out;
@@ -1046,7 +1059,7 @@ function onCella(e) {
   if (f === 'marchio' && !vuoto(v)) v = normMarchio(v);
   if (vuoto(v)) delete r[f]; else r[f] = v;
   inp.value = mostra(t, v);
-  if (['lotto', 'matr', 'mese', 'anno'].includes(f)) { CONFL.delete(PAGE + '|' + i); const nn = document.querySelector(`#sheet tbody tr[data-i="${i}"] td.n`); if (nn) nn.classList.remove('conf'); }
+  if (['lotto', 'matr', 'mese', 'anno'].includes(f)) ricalcolaConfl();
   segnaModifica(); aggiornaControlli();
   if (f === 'lotto' && RE_LOTTO_P.test(v || '')) compilaDaLotto(PAGE, i, v);
   else if (['matr', 'mese', 'anno'].includes(f) && RE_LOTTO_P.test(r.lotto || '')) compilaDaLotto(PAGE, i, r.lotto);
