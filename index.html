@@ -254,7 +254,21 @@ const LAV = {
   scrostatura: { nome: 'Scrostatura', xls: 'SCROSTATURA', tipo: 'B', righe: 10, cat3: true,  sheet: 'xl/worksheets/sheet4.xml', tpl: 10 },
   spiattatura: { nome: 'Spiattatura', xls: 'SPIATTATURA', tipo: 'B', righe: 20, cat3: false, sheet: 'xl/worksheets/sheet5.xml', tpl: 30 },
 };
-const KEYS = Object.keys(LAV);
+const KEYS = Object.keys(LAV);   // le 5 schede di base
+// schede aggiuntive nella stessa giornata (grattugiato_2, scaglie_2, cubetti_3…): stessa struttura della scheda di base
+const MAX_SCHEDE = 5;
+const baseDi = k => k.replace(/_\d+$/, '');
+const numScheda = k => { const m = k.match(/_(\d+)$/); return m ? +m[1] : 1; };
+function regScheda(k) {
+  if (LAV[k]) return LAV[k];
+  const b = baseDi(k); if (b === k || !LAV[b] || LAV[b].tipo !== 'A') return null;
+  const n = numScheda(k);
+  return (LAV[k] = Object.assign({}, LAV[b], { base: b, n, nome: LAV[b].nome + ' ' + n, xls: LAV[b].xls + ' (' + n + ')' }));
+}
+function chiavi(dati) {
+  const ex = Object.keys(dati || {}).filter(k => /_\d+$/.test(k) && regScheda(k));
+  return KEYS.flatMap(b => [b].concat(ex.filter(k => baseDi(k) === b).sort((x, y) => numScheda(x) - numScheda(y))));
+}
 const ORDINE_RIEP = ['scrostatura', 'spiattatura', 'grattugiato', 'scaglie', 'cubetti'];
 const NOME_RIEP = { scrostatura: 'Scrostatura', spiattatura: 'Spiattatura', grattugiato: 'Grattugia', scaglie: 'Scaglie', cubetti: 'Cubetti' };
 const FASCE = [['nd', 'Senza stagionatura dichiarata'], ['12', 'da 12 a 18 mesi'], ['19', 'da 19 a 24 mesi'], ['25', 'da 25 a 30 mesi'], ['31', 'da 31 a 36 mesi'], ['37', '37 mesi e oltre']];
@@ -391,7 +405,7 @@ function rigaUsata(r) { return Object.keys(r).some(k => !vuoto(r[k])); }
 function haMP(r) { return MP_KEYS.some(k => !vuoto(r[k])); }
 function haPF(r) { return PF_KEYS.some(k => !vuoto(r[k])); }
 function completaRighe(dati) {
-  KEYS.forEach(k => {
+  KEYS.concat(chiavi(dati)).forEach(k => {
     if (!dati[k]) dati[k] = { linea: '', righe: [] };
     const r = dati[k].righe || (dati[k].righe = []);
     while (r.length < LAV[k].righe) r.push({});
@@ -400,9 +414,10 @@ function completaRighe(dati) {
 }
 function datiDaSalvare(dati) {
   const out = {};
-  KEYS.forEach(k => {
+  chiavi(dati).forEach(k => {
     const r = dati[k].righe.map(x => { const o = {}; Object.keys(x).forEach(f => { if (!vuoto(x[f])) o[f] = x[f]; }); return o; });
     while (r.length && !rigaUsata(r[r.length - 1])) r.pop();
+    if (LAV[k].base && !r.length && !dati[k].linea) return;   // scheda aggiuntiva vuota: non si salva
     out[k] = { linea: dati[k].linea || '', righe: r };
   });
   return out;
@@ -666,7 +681,7 @@ function fascia(stag) {
 }
 function calcolaTotali(dati) {
   const t = {};
-  KEYS.forEach(k => {
+  chiavi(dati).forEach(k => {
     const L = LAV[k], rr = dati[k].righe;
     const o = {
       righe: rr.filter(rigaUsata).length,
@@ -683,7 +698,7 @@ function lineaMancante(k, cur) {
 }
 function errori(cur) {
   const out = [];
-  KEYS.forEach(k => {
+  chiavi(cur.dati).forEach(k => {
     const rr = cur.dati[k].righe; const cols = colonne(k);
     if (lineaMancante(k, cur)) out.push({ k, i: -1, f: 'linea', msg: 'Compila la linea di produzione (c\'è materia prima inserita)', col: 'Linea di produzione' });
     rr.forEach((r, i) => {
@@ -697,7 +712,7 @@ function errori(cur) {
 // ---------- interfaccia: menu ----------
 function renderTabs() {
   const errs = CUR ? errori(CUR) : [];
-  const h = KEYS.map(k => {
+  const h = (CUR ? chiavi(CUR.dati) : KEYS).map(k => {
     const n = CUR ? CUR.dati[k].righe.filter(rigaUsata).length : 0;
     const e = errs.some(x => x.k === k);
     return `<button class="tab-btn${PAGE === k ? ' active' : ''}" data-page="${k}"><span>${LAV[k].nome}</span><span class="cnt">${e ? '<i class="dot" title="Ci sono errori"></i> ' : ''}${n || ''}</span></button>`;
@@ -710,6 +725,7 @@ function renderTabs() {
 $('tabs').addEventListener('click', e => { const b = e.target.closest('[data-page]'); if (b) vai(b.dataset.page); });
 function vai(p) {
   chiudiFiltro();
+  if (LAV[p] && CUR && !CUR.dati[p]) p = baseDi(p);          // scheda aggiuntiva che nella giornata aperta non c'è
   PAGE = p; renderTabs();
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   if (LAV[p]) { $('v-lav').classList.add('active'); renderLav(); }
@@ -737,7 +753,7 @@ function oraBozza(ts) { const t = new Date(ts); return 'il ' + String(t.getDate(
 async function salvaBozzaClick() {
   if (serveData()) return;
   const dati = datiDaSalvare(CUR.dati);
-  if (!KEYS.some(k => dati[k].righe.length || dati[k].linea)) { toast('La giornata è vuota: non c\'è niente da salvare', true); return; }
+  if (!chiavi(dati).some(k => dati[k].righe.length || dati[k].linea)) { toast('La giornata è vuota: non c\'è niente da salvare', true); return; }
   const b = $('btn-bozza'); b.disabled = true;
   try { await DB.salvaBozzaDB(CUR.data, dati); CUR.bozza = oraBozza(new Date()); CUR.dirty = false; BOZZE = null; togliBozza(); aggiornaStato(); toast('Bozza del ' + isoToIt(CUR.data) + ' salvata: la ritrovi riaprendo questa data'); }
   catch (e) { toast('Errore nel salvataggio della bozza: ' + e.message, true); }
@@ -796,25 +812,25 @@ async function salvaGiornata() {
   const errs = errori(CUR);
   if (errs.length) { mostraErrori(errs, 'Non posso salvare: ci sono campi da correggere'); return false; }
   const dati = datiDaSalvare(CUR.dati), tot = calcolaTotali(dati);
-  if (!KEYS.some(k => tot[k].righe)) { toast('La giornata è vuota: non c\'è niente da salvare', true); return false; }
+  if (!chiavi(tot).some(k => tot[k].righe)) { toast('La giornata è vuota: non c\'è niente da salvare', true); return false; }
   let confl;
   try { confl = await controllaLotti(); } catch (e) { toast('Controllo lotti non riuscito: ' + e.message, true); return false; }
   if (confl.length) { mostraConflittiLotti(confl); return false; }
   const avvRif = [];
-  KEYS.forEach(k => analisiRif(k, CUR.dati[k].righe, CUR.data).filter(a => a.f !== 'anno' && a.f !== 'pesoPF').forEach(a => avvRif.push(`<li><b>${LAV[k].nome} · riga ${a.i + 1}</b> ${esc(a.msg)}</li>`)));
+  chiavi(CUR.dati).forEach(k => analisiRif(k, CUR.dati[k].righe, CUR.data).filter(a => a.f !== 'anno' && a.f !== 'pesoPF').forEach(a => avvRif.push(`<li><b>${LAV[k].nome} · riga ${a.i + 1}</b> ${esc(a.msg)}</li>`)));
   if (avvRif.length) {
     const ok = await chiedi('Controllo materia prima', `Ci sono prodotti con stagionatura dichiarata da controllare (celle gialle):<ul class="errlist" style="margin-top:10px">${avvRif.slice(0, 50).join('')}</ul><p style="margin-top:12px">Vuoi salvare comunque?</p>`, 'Sì, salva comunque', 'Torna indietro');
     if (!ok) return false;
   }
-  await caricaProdotti(KEYS.flatMap(k => CUR.dati[k].righe.map(r => r.lotto)));
+  await caricaProdotti(chiavi(CUR.dati).flatMap(k => CUR.dati[k].righe.map(r => r.lotto)));
   const vietati = [];
-  KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { const v = prodottoVietato(r); if (v) vietati.push(`<li><b>${LAV[k].nome} · riga ${i + 1}</b> lotto ${esc(r.lotto || '—')}: ${esc(v)}</li>`); }));
+  chiavi(CUR.dati).forEach(k => CUR.dati[k].righe.forEach((r, i) => { const v = prodottoVietato(r); if (v) vietati.push(`<li><b>${LAV[k].nome} · riga ${i + 1}</b> lotto ${esc(r.lotto || '—')}: ${esc(v)}</li>`); }));
   if (vietati.length) {
     const ok = await chiedi('Prodotti diversi da Parmigiano Reggiano', `Queste righe (in rosso) non sono Parmigiano Reggiano, Mezzano o Biologico:<ul class="errlist" style="margin-top:10px">${vietati.slice(0, 50).join('')}</ul><p style="margin-top:12px">Confermi di voler salvare la giornata così?</p>`, 'Sì, salva comunque', 'Torna indietro', true);
     if (!ok) return false;
   }
   const fuori = [];
-  KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (!vuoto(r.matr) && !MATRICOLE.has(normMatr(r.matr))) fuori.push(`<li><b>${LAV[k].nome} · riga ${i + 1}</b> matricola ${esc(r.matr)}</li>`); }));
+  chiavi(CUR.dati).forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (!vuoto(r.matr) && !MATRICOLE.has(normMatr(r.matr))) fuori.push(`<li><b>${LAV[k].nome} · riga ${i + 1}</b> matricola ${esc(r.matr)}</li>`); }));
   if (fuori.length) {
     const ok = await chiedi('Matricole non in elenco', `Queste matricole non sono nella pagina Matricole:<ul class="errlist" style="margin-top:10px">${fuori.slice(0, 50).join('')}</ul><p style="margin-top:12px">Salvo comunque la giornata?</p>`, 'Salva comunque', 'Torna indietro');
     if (!ok) return false;
@@ -874,7 +890,7 @@ function daRegistro(x) {                                // produzione "AGO-25" �
 const meseAnno = r => r.mese && r.anno ? MESI[r.mese - 1] + '-' + String(r.anno).slice(-2) : '—';
 async function controllaLotti() {
   const qui = {};                                     // lotto → [{k, i, r}]
-  KEYS.forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (RE_LOTTO_P.test(r.lotto || '')) (qui[r.lotto] = qui[r.lotto] || []).push({ k, i, r }); }));
+  chiavi(CUR.dati).forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (RE_LOTTO_P.test(r.lotto || '')) (qui[r.lotto] = qui[r.lotto] || []).push({ k, i, r }); }));
   const lotti = Object.keys(qui); if (!lotti.length) return [];
   const [registro, reg] = await Promise.all([DB.lottiRegistro(lotti), DB.lottiRegistrati(lotti, CUR.data)]);
   const out = [];
@@ -933,6 +949,18 @@ function mostraErrori(errs, titolo) {
 }
 
 // ---------- pagine di compilazione ----------
+function aggiungiScheda(b) {
+  const ex = chiavi(CUR.dati).filter(k => baseDi(k) === b);
+  if (ex.length >= MAX_SCHEDE) { toast('Puoi aggiungere al massimo ' + (MAX_SCHEDE - 1) + ' schede in più', true); return; }
+  const n = Math.max(...ex.map(numScheda)) + 1, k = b + '_' + n; regScheda(k);
+  CUR.dati[k] = { linea: '', righe: Array.from({ length: LAV[k].righe }, rigaVuota) };
+  segnaModifica(); vai(k); toast(LAV[k].nome + ' aggiunta: numerazione righe da 1, linea e totali propri');
+}
+async function eliminaScheda(k) {
+  const usate = CUR.dati[k].righe.filter(rigaUsata).length;
+  if (usate && !await chiedi('Elimina ' + LAV[k].nome, `Questa scheda ha ${usate} righe compilate: verranno eliminate (le altre schede non cambiano).`, 'Sì, elimina', 'Annulla', true)) return;
+  delete CUR.dati[k]; segnaModifica(); vai(baseDi(k));
+}
 function renderLav() {
   azzeraSelezione();
   if (!CUR.data) {
@@ -960,6 +988,7 @@ function renderLav() {
       ${L.tipo === 'A' ? `<div class="pill" id="pill-res">Residuo lavorazione <b id="res-val"></b></div>` : ''}
       <div class="pill">Data <b id="data-testata">${dataT || '—'}</b></div>
       ${L.tipo === 'A' ? `<label class="pill">Linea di produzione <input id="linea" value="${esc(D.linea)}" placeholder="A / A+B"></label>` : ''}
+      ${L.tipo === 'A' ? `<span style="flex:1"></span><button class="btn ghost sm" id="add-scheda" type="button" title="Aggiunge un'altra scheda di ${esc(LAV[baseDi(key)].nome.toLowerCase())} per la stessa giornata (numerazione righe da 1, linea e totali propri)">+ Aggiungi scheda</button>${L.base ? '<button class="btn ghost sm" id="del-scheda" type="button" title="Elimina questa scheda aggiuntiva">Elimina scheda</button>' : ''}` : ''}
     </div>
     <div class="toolbar">
       <input type="search" id="cerca" placeholder="Cerca in questa pagina (lotto, matricola, marchio…)" value="${esc(SEARCH[key] || '')}">
@@ -989,6 +1018,8 @@ function renderLav() {
   $('add-righe').addEventListener('click', () => { for (let j = 0; j < 10; j++) D.righe.push({}); segnaModifica(); renderLav(); });
   $('cerca').addEventListener('input', e => { SEARCH[key] = e.target.value; applicaRicerca(); });
   $('azzera').addEventListener('click', () => { SEARCH[key] = ''; $('cerca').value = ''; applicaRicerca(); });
+  if ($('add-scheda')) $('add-scheda').addEventListener('click', () => aggiungiScheda(baseDi(key)));
+  if ($('del-scheda')) $('del-scheda').addEventListener('click', () => eliminaScheda(key));
   if ($('linea')) $('linea').addEventListener('change', e => { D.linea = e.target.value.trim().toUpperCase().replace(/\s+/g, ''); e.target.value = D.linea; segnaModifica(); aggiornaControlli(); });
 }
 function rigaHTML(key, cols, r, i) {
@@ -1290,12 +1321,13 @@ async function renderArchivio() {
   const mesi = [...new Set(a.map(x => meseKey(x.data)))];
   if (ARCH_MESE && !mesi.includes(ARCH_MESE)) ARCH_MESE = '';
   const lst = a.filter(x => !ARCH_MESE || meseKey(x.data) === ARCH_MESE);
-  const somma = (x, f) => KEYS.reduce((s, k) => s + ((x.totali[k] || {})[f] || 0), 0);
+  const somma = (x, f) => Object.keys(x.totali).reduce((s, k) => s + ((x.totali[k] || {})[f] || 0), 0);
+  const righeDi = (x, b) => Object.keys(x.totali).filter(k => baseDi(k) === b).reduce((s, k) => s + ((x.totali[k] || {}).righe || 0), 0);
   v.innerHTML = `<div class="page-title"><h2>Archivio giornalieri</h2><span class="info">${a.length} giornate salvate</span><span style="flex:1"></span><button class="btn ghost" id="btn-backup" type="button" title="Scarica un file con tutte le giornate, le bozze e le matricole">Esporta backup</button><button class="btn ghost" id="btn-importa" type="button" title="Ricarica nel sito un file di backup">Importa backup</button><input type="file" id="file-backup" accept=".json,application/json" hidden></div>
     <div class="toolbar"><select id="arch-mese"><option value="">Tutti i mesi</option>${mesi.map(m => `<option value="${m}"${m === ARCH_MESE ? ' selected' : ''}>${meseLabel(m)}</option>`).join('')}</select></div>
     <div class="panel arch-lista" style="padding:0">${lst.length ? `<div class="list-wrap"><table class="list" style="width:100%"><thead><tr><th>Giornata</th>${KEYS.map(k => `<th class="r">${LAV[k].nome}<br>righe</th>`).join('')}<th class="r">Kg introdotti</th><th class="r">Kg prodotto finito</th><th></th></tr></thead><tbody>
     ${lst.map(x => `<tr><td><b>${isoToIt(x.data)}</b> <span style="color:var(--muted)">${GIORNI[new Date(x.data + 'T12:00').getDay()]}</span>${CUR && CUR.data === x.data ? ' <span class="stato ' + (CUR.dirty ? 'mod' : 'ok') + '">aperta</span>' : ''}</td>
-      ${KEYS.map(k => `<td class="r">${(x.totali[k] || {}).righe || ''}</td>`).join('')}
+      ${KEYS.map(k => `<td class="r">${righeDi(x, k) || ''}</td>`).join('')}
       <td class="r">${fmtKg2(somma(x, 'introdotta'))}</td><td class="r">${fmtKg2(somma(x, 'prodotto'))}</td>
       <td><div class="act"><button class="btn sm" data-apri="${x.data}">Apri</button><button class="btn ghost sm" data-xls="${x.data}" title="File giornaliero con tutte le 5 pagine compilate">Esporta Excel giornaliero</button><button class="btn ghost sm" data-mod="${x.data}" title="Cambia la data di produzione di questa giornata">Modifica data</button><button class="btn ghost sm" data-del="${x.data}" title="Elimina giornata">Elimina</button></div></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">Nessuna giornata salvata.</div>'}</div>`;
@@ -1435,19 +1467,21 @@ async function importaBackup(file) {
 }
 
 // ---------- riepilogo ----------
-const COL_RIEP_A = [['data', 'Giornata'], ['n', 'N°'], ['piatti', 'Piatti'], ['lotto', 'Lotto'], ['matr', 'Matricola'], ['mese', 'Mese'], ['anno', 'Anno'], ['forme', 'Forme'], ['peso', 'Peso kg'], ['orig', 'Origine sfrido'], ['pesoOrig', 'Peso kg'], ['rif', 'Rif. MP'], ['marchio', 'Marchio / codice / formato'], ['stag', 'Stag.'], ['pezzi', 'Pz/cart.'], ['lottoPF', 'Lotto PF'], ['pesoPF', 'Prodotto finito kg'], ['sfridi', 'Sfridi kg'], ['cat3', 'Cat. 3 kg'], ['note', 'Note'], ['linea', 'Linea']];
+const COL_RIEP_A = [['data', 'Giornata'], ['scheda', 'Sch.'], ['n', 'N°'], ['piatti', 'Piatti'], ['lotto', 'Lotto'], ['matr', 'Matricola'], ['mese', 'Mese'], ['anno', 'Anno'], ['forme', 'Forme'], ['peso', 'Peso kg'], ['orig', 'Origine sfrido'], ['pesoOrig', 'Peso kg'], ['rif', 'Rif. MP'], ['marchio', 'Marchio / codice / formato'], ['stag', 'Stag.'], ['pezzi', 'Pz/cart.'], ['lottoPF', 'Lotto PF'], ['pesoPF', 'Prodotto finito kg'], ['sfridi', 'Sfridi kg'], ['cat3', 'Cat. 3 kg'], ['note', 'Note'], ['linea', 'Linea']];
 const COL_RIEP_B = [['data', 'Giornata'], ['n', 'N°'], ['lotto', 'Lotto'], ['matr', 'Matricola'], ['mese', 'Mese'], ['anno', 'Anno'], ['forme', 'Forme'], ['peso', 'Peso kg'], ['media', 'Media kg/forma'], ['lottoPF', 'Lotto PF'], ['pesoPF', 'Prodotto finito kg'], ['sfridi', 'Sfridi kg'], ['cat3', 'Cat. 3 kg'], ['rim', 'Rimanente kg']];
 const KG_COLS = new Set(['peso', 'pesoOrig', 'pesoPF', 'sfridi', 'cat3', 'rim', 'media']);
 function colRiep(k) { const c = LAV[k].tipo === 'A' ? COL_RIEP_A : COL_RIEP_B; return c.filter(([f]) => !(f === 'piatti' && !LAV[k].piatti) && !(f === 'cat3' && LAV[k].tipo === 'B' && !LAV[k].cat3)); }
 function righeRiepilogo(k, giornate) {
   const out = [];
   giornate.slice().sort((a, b) => a.data.localeCompare(b.data)).forEach(g => {
-    const D = g.dati[k]; if (!D) return;
-    (D.righe || []).forEach((r, i) => {
-      if (!rigaUsata(r)) return;
-      const o = Object.assign({}, r, { data: g.data, n: i + 1, linea: D.linea || '', lottoPF: haLottoPF(k, r) ? lottoGiornata(g.data) : '' });
-      if (LAV[k].tipo === 'B') { const m = media(r); o.media = m == null ? '' : Math.round(m * 10) / 10; o.rim = rimanente(k, r); }
-      out.push(o);
+    chiavi(g.dati).filter(kk => baseDi(kk) === k).forEach(kk => {
+      const D = g.dati[kk]; if (!D) return;
+      (D.righe || []).forEach((r, i) => {
+        if (!rigaUsata(r)) return;
+        const o = Object.assign({}, r, { data: g.data, scheda: numScheda(kk), n: i + 1, linea: D.linea || '', lottoPF: haLottoPF(kk, r) ? lottoGiornata(g.data) : '' });
+        if (LAV[k].tipo === 'B') { const m = media(r); o.media = m == null ? '' : Math.round(m * 10) / 10; o.rim = rimanente(k, r); }
+        out.push(o);
+      });
     });
   });
   return out;
@@ -1589,8 +1623,8 @@ function fuoriFiltro(e) { const b = $('filtro-pop'); if (b && !b.contains(e.targ
 function chiudiFiltro() { const b = $('filtro-pop'); if (b) b.remove(); document.removeEventListener('mousedown', fuoriFiltro); }
 function totMese(m) {
   const t = {}; KEYS.forEach(k => { t[k] = { introdotta: 0, prodotto: 0, sfridi: 0, cat3: 0, fasce: {} }; FASCE.forEach(([f]) => t[k].fasce[f] = 0); });
-  ARCH.filter(x => meseKey(x.data) === m).forEach(x => KEYS.forEach(k => {
-    const s = x.totali[k]; if (!s) return; const o = t[k];
+  ARCH.filter(x => meseKey(x.data) === m).forEach(x => Object.keys(x.totali).forEach(kk => {
+    const s = x.totali[kk]; const k = baseDi(kk); if (!s || !t[k]) return; const o = t[k];
     o.introdotta += s.introdotta || 0; o.prodotto += s.prodotto || 0; o.sfridi += s.sfridi || 0; o.cat3 += s.cat3 || 0;
     if (s.fasce) FASCE.forEach(([f]) => o.fasce[f] += s.fasce[f] || 0);
   }));
@@ -1650,6 +1684,15 @@ function esportaGiornaliero(iso, dati) {
   dati = completaRighe(JSON.parse(JSON.stringify(dati)));
   const files = Object.assign({}, MODELLO);
   KEYS.forEach(k => { files[LAV[k].sheet] = compilaFoglio(k, dati[k], iso); });
+  // schede aggiuntive: nuovi fogli identici al modello (GRATTUGIATO (2), SCAGLIE (2)…) in coda al file
+  const extra = chiavi(dati).filter(k => LAV[k].base);
+  extra.forEach((k, j) => {
+    const nf = 9 + j, path = 'xl/worksheets/sheet' + nf + '.xml';
+    const guid = new Map();   // identificativi delle regole di formattazione condizionale: nuovi per il foglio copiato
+    files[path] = compilaFoglio(k, dati[k], iso).replace(/\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}/g, g => { if (!guid.has(g)) guid.set(g, '{' + crypto.randomUUID().toUpperCase() + '}'); return guid.get(g); });
+    files['[Content_Types].xml'] = files['[Content_Types].xml'].replace('</Types>', `<Override PartName="/${path}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`);
+    files['xl/_rels/workbook.xml.rels'] = files['xl/_rels/workbook.xml.rels'].replace('</Relationships>', `<Relationship Id="rId${20 + j}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${nf}.xml"/></Relationships>`);
+  });
   files['xl/worksheets/sheet6.xml'] = compilaMatricole(files['xl/worksheets/sheet6.xml']);
   let wb = files['xl/workbook.xml'];
   wb = wb.replace(/<calcPr([^>]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\s*fullCalcOnLoad="[^"]*"/, '') + ' fullCalcOnLoad="1"/>');
@@ -1658,7 +1701,25 @@ function esportaGiornaliero(iso, dati) {
     wb = wb.replace(new RegExp('(' + L.xls + '!\\$A\\$1:\\$[A-Z]+\\$)(\\d+)'), (m, a, n) => a + Math.max(+n, 8 + usate));
   });
   wb = wb.replace(/matricole!\$A\$1:\$A\$\d+/, 'matricole!$A$1:$A$' + (MATRICOLE.size + 1));
+  if (extra.length) {
+    const nBase = (wb.match(/<sheet /g) || []).length;                      // i nuovi fogli si accodano: localSheetId = posizione nell'elenco
+    wb = wb.replace('</sheets>', extra.map((k, j) => `<sheet name="${LAV[k].xls}" sheetId="${9 + j}" r:id="rId${20 + j}"/>`).join('') + '</sheets>');
+    wb = wb.replace('</definedNames>', extra.map((k, j) => {
+      let usate = 0; dati[k].righe.forEach((r, i) => { if (rigaUsata(r)) usate = i + 1; });
+      const m = wb.match(new RegExp(LAV[baseDi(k)].xls + '!\\$A\\$1:\\$([A-Z]+)\\$(\\d+)')), col = m ? m[1] : 'S', n = m ? +m[2] : 18;
+      return `<definedName name="_xlnm.Print_Area" localSheetId="${nBase + j}">'${LAV[k].xls}'!$A$1:$${col}$${Math.max(n, 8 + usate + 1)}</definedName>`;
+    }).join('') + '</definedNames>');
+  }
   files['xl/workbook.xml'] = wb;
+  if (extra.length && files['docProps/app.xml']) {                        // elenco dei fogli nelle proprietà del file
+    let app = files['docProps/app.xml'];
+    app = app.replace(/(<vt:lpstr>Fogli di lavoro<\/vt:lpstr><\/vt:variant><vt:variant><vt:i4>)(\d+)/, (m, a, n) => a + (+n + extra.length))
+             .replace(/(<vt:lpstr>Intervalli denominati<\/vt:lpstr><\/vt:variant><vt:variant><vt:i4>)(\d+)/, (m, a, n) => a + (+n + extra.length))
+             .replace(/<vt:vector size="(\d+)" baseType="lpstr">/, (m, n) => `<vt:vector size="${+n + 2 * extra.length}" baseType="lpstr">`)
+             .replace(/(<vt:lpstr>SPIATTATURA \(2\)<\/vt:lpstr>)/, '$1' + extra.map(k => `<vt:lpstr>${LAV[k].xls}</vt:lpstr>`).join(''))
+             .replace('</vt:vector></TitlesOfParts>', extra.map(k => `<vt:lpstr>'${LAV[k].xls}'!Area_stampa</vt:lpstr>`).join('') + '</vt:vector></TitlesOfParts>');
+    files['docProps/app.xml'] = app;
+  }
   const ord = ['[Content_Types].xml', '_rels/.rels'];
   const lista = ord.map(n => [n, files[n]]).concat(Object.keys(files).filter(n => !ord.includes(n)).map(n => [n, files[n]]));
   scarica(creaZip(lista), isoToIt(iso).replace(/-/g, '.') + '.xlsx');
@@ -1803,15 +1864,17 @@ async function esportaRiepilogoModello() {
   KEYS.forEach(k => {
     const vals = [];
     giornate.forEach(g => {
-      const D = completaRighe(JSON.parse(JSON.stringify(g.dati)))[k];
-      const t = calcolaTotali({ ...completaRighe(JSON.parse(JSON.stringify(g.dati))) })[k];
-      ['introdotta', 'prodotto', 'sfridi', 'cat3'].forEach(f => tot[k][f] += t[f] || 0);
-      if (t.fasce) FASCE.forEach(([f]) => tot[k].fasce[f] += t.fasce[f]);
-      D.righe.forEach((r, i) => {
-        if (!rigaUsata(r)) return;
-        const v = valoriExcel(k, r, g.data); v.A = { n: i + 1 };
-        if (!vuoto(r.anno)) v.E = typeof r.anno === 'number' ? { s: String(r.anno) } : { s: String(r.anno) };
-        vals.push(v);
+      const dd = completaRighe(JSON.parse(JSON.stringify(g.dati))), tt = calcolaTotali(dd);
+      chiavi(dd).filter(kk => baseDi(kk) === k).forEach(kk => {
+        const D = dd[kk], t = tt[kk];
+        ['introdotta', 'prodotto', 'sfridi', 'cat3'].forEach(f => tot[k][f] += t[f] || 0);
+        if (t.fasce) FASCE.forEach(([f]) => tot[k].fasce[f] += t.fasce[f]);
+        D.righe.forEach((r, i) => {
+          if (!rigaUsata(r)) return;
+          const v = valoriExcel(kk, r, g.data); v.A = { n: i + 1 };
+          if (!vuoto(r.anno)) v.E = typeof r.anno === 'number' ? { s: String(r.anno) } : { s: String(r.anno) };
+          vals.push(v);
+        });
       });
     });
     const res = compilaFoglioRiep(files[FOGLI_R[k]], vals);
