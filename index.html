@@ -1726,14 +1726,25 @@ function esportaGiornaliero(iso, dati) {
     wb = wb.replace(new RegExp('(' + L.xls + '!\\$A\\$1:\\$[A-Z]+\\$)(\\d+)'), (m, a, n) => a + Math.max(+n, 8 + usate));
   });
   wb = wb.replace(/matricole!\$A\$1:\$A\$\d+/, 'matricole!$A$1:$A$' + (MATRICOLE.size + 1));
+  let ordineFogli = null;
   if (extra.length) {
-    const nBase = (wb.match(/<sheet /g) || []).length;                      // i nuovi fogli si accodano: localSheetId = posizione nell'elenco
-    wb = wb.replace('</sheets>', extra.map((k, j) => `<sheet name="${LAV[k].xls}" sheetId="${9 + j}" r:id="rId${20 + j}"/>`).join('') + '</sheets>');
-    wb = wb.replace('</definedNames>', extra.map((k, j) => {
-      let usate = 0; dati[k].righe.forEach((r, i) => { if (rigaUsata(r)) usate = i + 1; });
+    // elenco dei fogli: ogni scheda aggiuntiva subito dopo la sua scheda di base (GRATTUGIATO, SCAGLIE, SCAGLIE (2), CUBETTI…)
+    const voci = wb.match(/<sheet [^>]*\/>/g) || [];
+    const nome = v => (v.match(/name="([^"]*)"/) || [])[1];
+    const nuove = extra.map((k, j) => ({ k, xml: `<sheet name="${LAV[k].xls}" sheetId="${9 + j}" r:id="rId${20 + j}"/>` }));
+    const seq = [];
+    voci.forEach(v => { seq.push({ xml: v, old: seq.filter(x => x.old != null).length });
+      const b = KEYS.find(k => LAV[k].xls === nome(v)); if (b) nuove.filter(n => baseDi(n.k) === b).forEach(n => seq.push({ xml: n.xml, k: n.k })); });
+    seq.forEach((x, idx) => x.pos = idx);
+    const nuovaPos = {}; seq.forEach(x => { if (x.old != null) nuovaPos[x.old] = x.pos; });
+    wb = wb.replace(/<sheets>[\s\S]*<\/sheets>/, '<sheets>' + seq.map(x => x.xml).join('') + '</sheets>');
+    wb = wb.replace(/(<definedName [^>]*localSheetId=")(\d+)(")/g, (m, a, n, c) => a + (nuovaPos[+n] != null ? nuovaPos[+n] : n) + c);
+    wb = wb.replace('</definedNames>', seq.filter(x => x.k).map(x => {
+      const k = x.k; let usate = 0; dati[k].righe.forEach((r, i) => { if (rigaUsata(r)) usate = i + 1; });
       const m = wb.match(new RegExp(LAV[baseDi(k)].xls + '!\\$A\\$1:\\$([A-Z]+)\\$(\\d+)')), col = m ? m[1] : 'S', n = m ? +m[2] : 18;
-      return `<definedName name="_xlnm.Print_Area" localSheetId="${nBase + j}">'${LAV[k].xls}'!$A$1:$${col}$${Math.max(n, 8 + usate + 1)}</definedName>`;
+      return `<definedName name="_xlnm.Print_Area" localSheetId="${x.pos}">'${LAV[k].xls}'!$A$1:$${col}$${Math.max(n, 8 + usate + 1)}</definedName>`;
     }).join('') + '</definedNames>');
+    ordineFogli = seq.map(x => x.k ? LAV[x.k].xls : nome(x.xml));
   }
   files['xl/workbook.xml'] = wb;
   if (extra.length && files['docProps/app.xml']) {                        // elenco dei fogli nelle proprietà del file
@@ -1741,7 +1752,7 @@ function esportaGiornaliero(iso, dati) {
     app = app.replace(/(<vt:lpstr>Fogli di lavoro<\/vt:lpstr><\/vt:variant><vt:variant><vt:i4>)(\d+)/, (m, a, n) => a + (+n + extra.length))
              .replace(/(<vt:lpstr>Intervalli denominati<\/vt:lpstr><\/vt:variant><vt:variant><vt:i4>)(\d+)/, (m, a, n) => a + (+n + extra.length))
              .replace(/<vt:vector size="(\d+)" baseType="lpstr">/, (m, n) => `<vt:vector size="${+n + 2 * extra.length}" baseType="lpstr">`)
-             .replace(/(<vt:lpstr>SPIATTATURA \(2\)<\/vt:lpstr>)/, '$1' + extra.map(k => `<vt:lpstr>${LAV[k].xls}</vt:lpstr>`).join(''))
+             .replace(/(<TitlesOfParts><vt:vector size="\d+" baseType="lpstr">)(?:<vt:lpstr>[^<]*<\/vt:lpstr>){8}/, (m, h) => h + ordineFogli.map(n => `<vt:lpstr>${n}</vt:lpstr>`).join(''))
              .replace('</vt:vector></TitlesOfParts>', extra.map(k => `<vt:lpstr>'${LAV[k].xls}'!Area_stampa</vt:lpstr>`).join('') + '</vt:vector></TitlesOfParts>');
     files['docProps/app.xml'] = app;
   }
