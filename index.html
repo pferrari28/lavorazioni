@@ -105,6 +105,7 @@ table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums
 .sheet td.sepcol{width:6px;min-width:6px;padding:0;background:#AEB8C2;border:0;}
 .addrow{margin:10px 0 0;display:flex;gap:10px;align-items:center;}
 .sheet tbody td.n.on{background:#1F6FEB !important;color:#fff !important;font-size:.95rem;box-shadow:inset 0 0 0 1px #1F6FEB;}
+.sheet tbody td.n.conf{background:#D9480F !important;color:#fff !important;font-weight:700;}
 .sheet td.sel{background-image:linear-gradient(rgba(31,111,235,.20),rgba(31,111,235,.20));outline:2px solid #1F6FEB;outline-offset:-2px;}
 .sheet.selmode{user-select:none;-webkit-user-select:none;cursor:cell;}
 .sheet.selmode input{pointer-events:none;}
@@ -714,7 +715,7 @@ function renderTabs() {
   const errs = CUR ? errori(CUR) : [];
   const h = (CUR ? chiavi(CUR.dati) : KEYS).map(k => {
     const n = CUR ? CUR.dati[k].righe.filter(rigaUsata).length : 0;
-    const e = errs.some(x => x.k === k);
+    const e = errs.some(x => x.k === k) || (CUR && CONFL_DATA === CUR.data && [...CONFL].some(c => c.split('|')[0] === k));
     return `<button class="tab-btn${PAGE === k ? ' active' : ''}" data-page="${k}"><span>${LAV[k].nome}</span><span class="cnt">${e ? '<i class="dot" title="Ci sono errori"></i> ' : ''}${n || ''}</span></button>`;
   }).join('') + '<div class="sep"></div>' +
     `<button class="tab-btn${PAGE === 'archivio' ? ' active' : ''}" data-page="archivio"><span>Archivio giornalieri</span></button>` +
@@ -888,7 +889,10 @@ function daRegistro(x) {                                // produzione "AGO-25" �
   return { matr: x.matricola, mese: m ? MESI.indexOf(m[1]) + 1 || null : null, anno: m ? 2000 + +m[2] : null };
 }
 const meseAnno = r => r.mese && r.anno ? MESI[r.mese - 1] + '-' + String(r.anno).slice(-2) : '—';
+// righe della giornata coinvolte in un conflitto lotto/matricola/mese-anno (evidenziate finché non le correggi)
+let CONFL = new Set(), CONFL_DATA = null;
 async function controllaLotti() {
+  CONFL = new Set(); CONFL_DATA = CUR.data;
   const qui = {};                                     // lotto → [{k, i, r}]
   chiavi(CUR.dati).forEach(k => CUR.dati[k].righe.forEach((r, i) => { if (RE_LOTTO_P.test(r.lotto || '')) (qui[r.lotto] = qui[r.lotto] || []).push({ k, i, r }); }));
   const lotti = Object.keys(qui); if (!lotti.length) return [];
@@ -911,11 +915,13 @@ async function controllaLotti() {
     if (combos.size > 1) {
       const primo = righe.find(x => x.k) || {};
       out.push({ lotto: l, k: primo.k, i: primo.i, righe, registro: nelRegistro.length > 0 });
+      qui[l].forEach(x => CONFL.add(x.k + '|' + x.i));
     }
   });
   return out;
 }
 function mostraConflittiLotti(confl) {
+  if (PAGE !== 'archivio' && LAV[PAGE]) aggiornaControlli(); else renderTabs();   // evidenzia subito le righe coinvolte
   const diversa = (rr, f) => new Set(rr.map(x => f === 'matr' ? normMatr(x[f]).replace(/\s+/g, '') : x[f])).size > 1;
   apriModal(`<h2>Lotti con matricola o mese diversi</h2>
     <p>Ogni lotto deve avere sempre la stessa matricola e lo stesso mese/anno. Se il lotto è nel <b>Registro lotti</b> (riga verde) vale quello. Correggi prima di salvare: clicca su una riga di <b>questa giornata</b> per andare alla cella.</p>
@@ -1040,6 +1046,7 @@ function onCella(e) {
   if (f === 'marchio' && !vuoto(v)) v = normMarchio(v);
   if (vuoto(v)) delete r[f]; else r[f] = v;
   inp.value = mostra(t, v);
+  if (['lotto', 'matr', 'mese', 'anno'].includes(f)) { CONFL.delete(PAGE + '|' + i); const nn = document.querySelector(`#sheet tbody tr[data-i="${i}"] td.n`); if (nn) nn.classList.remove('conf'); }
   segnaModifica(); aggiornaControlli();
   if (f === 'lotto' && RE_LOTTO_P.test(v || '')) compilaDaLotto(PAGE, i, v);
   else if (['matr', 'mese', 'anno'].includes(f) && RE_LOTTO_P.test(r.lotto || '')) compilaDaLotto(PAGE, i, r.lotto);
@@ -1253,6 +1260,7 @@ function onHover(e) {
 }
 function aggiornaControlli() {
   const key = PAGE, L = LAV[key], rr = CUR.dati[key].righe, sh = $('sheet'); if (!sh) return;
+  sh.querySelectorAll('td.n.conf').forEach(n => n.classList.remove('conf'));
   sh.querySelectorAll('td.err,td.warn,td.rosso').forEach(td => { td.classList.remove('err', 'warn', 'rosso'); delete td.dataset.msg; });
   rr.forEach((r, i) => {
     const tr = sh.querySelector(`tbody tr[data-i="${i}"]`), v = prodottoVietato(r);
@@ -1265,6 +1273,10 @@ function aggiornaControlli() {
     for (const [f, m] of Object.entries(W)) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.add('warn'); td.dataset.msg = m; } }
     for (const [f, m] of Object.entries(E)) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.remove('warn'); td.classList.add('err'); td.dataset.msg = m; } }
     for (const [f, m] of Object.entries(erroriRegistro(r))) { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.remove('warn', 'rosso'); td.classList.add('err'); td.dataset.msg = m; } }
+    if (CONFL_DATA === CUR.data && CONFL.has(key + '|' + i)) {
+      ['lotto', 'matr', 'mese', 'anno'].forEach(f => { const td = sh.querySelector(`td[data-i="${i}"][data-f="${f}"]`); if (td) { td.classList.remove('warn', 'rosso'); td.classList.add('err'); td.dataset.msg = 'Lotto con matricola o mese-anno diversi tra le righe: controlla l\'elenco'; } });
+      const nn = sh.querySelector(`tbody tr[data-i="${i}"] td.n`); if (nn) nn.classList.add('conf');
+    }
     if (L.tipo === 'B') {
       const md = sh.querySelector(`td[data-i="${i}"][data-f="media"]`), m = media(r);
       if (md) md.textContent = m == null ? '' : m.toLocaleString('it-IT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
