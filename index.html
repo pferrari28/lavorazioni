@@ -1234,69 +1234,6 @@ document.addEventListener('mouseup', () => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && SEL.on) azzeraSelezione(); });
 
-// ---------- copia/incolla del blocco Lotto · Matricola · Mese · Anno (solo questi campi) ----------
-const CLIP = { campi: [], righe: [], tsv: '' };
-let ULTIMO_INCOLLA = null;
-function righeSelezionate(sh) { return [...new Set([...sh.querySelectorAll('td.sel')].map(td => +td.dataset.i))].sort((a, b) => a - b); }
-function copiaBlocco() {
-  const sh = $('sheet'); if (!sh || !sh.classList.contains('selmode')) return false;
-  const rr = CUR.dati[PAGE].righe, sel = [...sh.querySelectorAll('td.sel')];
-  const campi = MP_COPIA.filter(f => sel.some(td => td.dataset.f === f));
-  if (!campi.length) { toast('Si copiano solo Lotto, Matricola, Mese e Anno: seleziona quelle celle', true); return true; }
-  const righe = [...new Set(sel.filter(td => campi.includes(td.dataset.f)).map(td => +td.dataset.i))].sort((a, b) => a - b);
-  CLIP.campi = campi; CLIP.righe = righe.map(i => { const o = {}; campi.forEach(f => o[f] = rr[i][f]); return o; });
-  CLIP.tsv = CLIP.righe.map(o => campi.map(f => o[f] == null ? '' : String(o[f])).join('\t')).join('\n');
-  try { navigator.clipboard.writeText(CLIP.tsv); } catch (e) {}
-  toast(`Copiato ${campi.map(f => ({ lotto: 'lotto', matr: 'matricola', mese: 'mese', anno: 'anno' })[f]).join(', ')} da ${righe.length} ${righe.length === 1 ? 'riga' : 'righe'}`);
-  return true;
-}
-function incollaBlocco(righeDest) {
-  if (!CLIP.righe.length || !righeDest.length) return false;
-  const rr = CUR.dati[PAGE].righe, prima = [];
-  const dest = CLIP.righe.length === 1 ? righeDest : CLIP.righe.map((_, k) => righeDest[0] + k).filter(i => i < rr.length);
-  dest.forEach((i, k) => {
-    const src = CLIP.righe.length === 1 ? CLIP.righe[0] : CLIP.righe[k];
-    CLIP.campi.forEach(f => {
-      prima.push({ i, f, v: rr[i][f] });
-      if (vuoto(src[f])) delete rr[i][f]; else rr[i][f] = src[f];
-      aggiornaInput(i, f);
-    });
-  });
-  ULTIMO_INCOLLA = { pagina: PAGE, prima };
-  ricalcolaConfl(); segnaModifica(); aggiornaControlli();
-  toast(`Incollato in ${dest.length} ${dest.length === 1 ? 'riga' : 'righe'} (CTRL+Z per annullare)`);
-  return true;
-}
-function aggiornaInput(i, f) {
-  const td = document.querySelector(`#sheet td[data-i="${i}"][data-f="${f}"]`), inp = td && td.querySelector('input'); if (!inp) return;
-  const v = CUR.dati[PAGE].righe[i][f]; inp.value = v == null ? '' : mostra(inp.dataset.t, v);
-}
-function annullaIncolla() {
-  if (!ULTIMO_INCOLLA || ULTIMO_INCOLLA.pagina !== PAGE) return false;
-  const rr = CUR.dati[PAGE].righe;
-  ULTIMO_INCOLLA.prima.forEach(({ i, f, v }) => { if (v == null) delete rr[i][f]; else rr[i][f] = v; aggiornaInput(i, f); });
-  ULTIMO_INCOLLA = null; ricalcolaConfl(); segnaModifica(); aggiornaControlli(); toast('Incolla annullato');
-  return true;
-}
-document.addEventListener('keydown', e => {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  const sh = $('sheet'); if (!sh || !document.body.contains(sh)) return;
-  const k = e.key.toLowerCase();
-  const inInput = document.activeElement && document.activeElement.matches && document.activeElement.matches('#sheet input');
-  if (sh.classList.contains('selmode') && !inInput) {
-    if (k === 'c') { if (copiaBlocco()) e.preventDefault(); }
-    else if (k === 'v') { if (incollaBlocco(righeSelezionate(sh))) e.preventDefault(); }
-    else if (k === 'z') { if (annullaIncolla()) e.preventDefault(); }
-  } else if (k === 'z' && !inInput && ULTIMO_INCOLLA) { if (annullaIncolla()) e.preventDefault(); }
-});
-document.addEventListener('paste', e => {                       // incolla con il cursore in una cella: parte da quella riga
-  const a = document.activeElement; if (!a || !a.matches || !a.matches('#sheet input') || !CLIP.righe.length) return;
-  const txt = (e.clipboardData && e.clipboardData.getData('text')) || '';
-  if (txt.replace(/\r/g, '').replace(/\n$/, '') !== CLIP.tsv) return;
-  if (!MP_COPIA.includes(a.closest('td').dataset.f)) return;
-  e.preventDefault(); incollaBlocco([+a.closest('td').dataset.i]);
-});
-const MP_COPIA = ['lotto', 'matr', 'mese', 'anno'];
 function onClickCella(e) {
   const td = e.target.closest('td.chk'); if (!td) return;
   const r = CUR.dati[PAGE].righe[+td.dataset.i];
