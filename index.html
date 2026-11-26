@@ -394,7 +394,7 @@ let PAGE = 'grattugiato';
 let ARCH = null;           // elenco giornate [{data, totali}] (scaricato solo quando serve)
 const CACHE_DATI = {};     // data → dati (giornate già scaricate per il riepilogo)
 const SEARCH = {};
-let RIEP = { sub: 'righe', lav: 'grattugiato', mese: null, q: '', filtri: {}, ord: null };   // filtri: colonna → valori scelti; ord: {f, dir}
+let RIEP = { cq: '', cmese: '', sub: 'righe', lav: 'grattugiato', mese: null, q: '', filtri: {}, ord: null };   // filtri: colonna → valori scelti; ord: {f, dir}
 
 function rigaVuota() { return {}; }
 function giornataVuota(data) {
@@ -1544,7 +1544,7 @@ async function renderRiepilogo() {
   if (RIEP.mese == null || (RIEP.mese && !mesi.includes(RIEP.mese))) RIEP.mese = mesi[0] || '';
   const selMese = `<select id="r-mese">${mesi.map(m => `<option value="${m}"${m === RIEP.mese ? ' selected' : ''}>${meseLabel(m)}</option>`).join('')}<option value=""${RIEP.mese === '' ? ' selected' : ''}>Tutti i mesi</option></select>`;
   v.innerHTML = `<div class="page-title"><h2>Riepilogo</h2></div>
-    <div class="subtabs"><button data-sub="righe" class="${RIEP.sub === 'righe' ? 'on' : ''}">Righe per lavorazione</button><button data-sub="mensile" class="${RIEP.sub === 'mensile' ? 'on' : ''}">Riepilogo mensile e prospetti P1 / G1</button></div>
+    <div class="subtabs"><button data-sub="righe" class="${RIEP.sub === 'righe' ? 'on' : ''}">Righe per lavorazione</button><button data-sub="cerca" class="${RIEP.sub === 'cerca' ? 'on' : ''}">Cerca lotto / matricola</button><button data-sub="mensile" class="${RIEP.sub === 'mensile' ? 'on' : ''}">Riepilogo mensile e prospetti P1 / G1</button></div>
     <div id="r-body"></div>`;
   v.querySelector('.subtabs').addEventListener('click', e => { const b = e.target.closest('[data-sub]'); if (b) { RIEP.sub = b.dataset.sub; renderRiepilogo(); } });
   const body = $('r-body');
@@ -1560,6 +1560,16 @@ async function renderRiepilogo() {
     $('r-xls').addEventListener('click', esportaRiepilogoModello);
     try { await datiPeriodo(RIEP.mese); } catch (e) { $('r-tab').innerHTML = `<div class="empty">Errore: ${esc(e.message)}</div>`; return; }
     disegnaRigheRiep();
+  } else if (RIEP.sub === 'cerca') {
+    const selM = `<select id="c-mese">${mesi.map(m => `<option value="${m}"${m === RIEP.cmese ? ' selected' : ''}>${meseLabel(m)}</option>`).join('')}<option value=""${RIEP.cmese === '' ? ' selected' : ''}>Tutti i mesi</option></select>`;
+    body.innerHTML = `<div class="toolbar">${selM}<input type="search" id="c-q" placeholder="Lotto (anche parziale) o matricola (esatta)" value="${esc(RIEP.cq)}" style="min-width:300px"><button class="btn ghost sm" id="c-azzera">Azzera</button><span style="flex:1"></span><button class="btn ghost sm" id="c-xls">Esporta risultati in Excel</button></div><div id="c-ris"></div>`;
+    $('c-mese').addEventListener('change', async e => { RIEP.cmese = e.target.value; await caricaPerCerca(); disegnaCerca(); });
+    $('c-q').addEventListener('input', e => { RIEP.cq = e.target.value; disegnaCerca(); });
+    $('c-azzera').addEventListener('click', () => { RIEP.cq = ''; $('c-q').value = ''; disegnaCerca(); $('c-q').focus(); });
+    $('c-xls').addEventListener('click', esportaCerca);
+    $('c-ris').innerHTML = '<div class="panel"><div class="empty">Caricamento…</div></div>';
+    await caricaPerCerca(); disegnaCerca();
+    $('c-q').focus();
   } else {
     body.innerHTML = `<div class="toolbar">${selMese}<span style="flex:1"></span><button class="btn ghost sm" id="m-xls">Esporta Excel</button></div><div id="m-tab"></div>`;
     $('r-mese').addEventListener('change', e => { RIEP.mese = e.target.value; renderRiepilogo(); });
@@ -1567,6 +1577,46 @@ async function renderRiepilogo() {
     const lst = (RIEP.mese ? [RIEP.mese] : mesi);
     $('m-tab').innerHTML = lst.map(m => `<div class="panel"><h3>${meseLabel(m)}</h3>${tabMensile(m)}<div class="mesi-grid" style="margin-top:16px">${tabFasce(m, 'P1', 'PORZIONATO SENZA CROSTA (scaglie + cubetti)', ['scaglie', 'cubetti'])}${tabFasce(m, 'G1', 'GRATTUGIATO', ['grattugiato'])}</div></div>`).join('');
   }
+}
+
+// ---------- ricerca di un lotto / matricola in tutte le lavorazioni ----------
+async function caricaPerCerca() {
+  try { await datiPeriodo(RIEP.cmese); } catch (e) { $('c-ris').innerHTML = `<div class="panel"><div class="empty">Errore: ${esc(e.message)}</div></div>`; throw e; }
+}
+function risultatiCerca() {
+  const q = RIEP.cq.trim().toUpperCase(); if (!q) return null;
+  const g = Object.keys(CACHE_DATI).filter(d => ARCH.some(x => x.data === d) && (!RIEP.cmese || meseKey(d) === RIEP.cmese)).sort().map(d => ({ data: d, dati: CACHE_DATI[d] }));
+  return KEYS.map(k => ({ k, rows: righeRiepilogo(k, g).filter(r => String(r.matr || '').toUpperCase() === q || String(r.lotto || '').toUpperCase().includes(q)) }));
+}
+function disegnaCerca() {
+  const box = $('c-ris'); if (!box) return;
+  const ris = risultatiCerca();
+  if (!ris) { box.innerHTML = '<div class="panel"><div class="empty">Scrivi un lotto (es. 26P123) o una matricola (es. 2115): vedrai le righe di tutte le lavorazioni.</div></div>'; return; }
+  const pesoDi = rows => rows.reduce((s, r) => s + (typeof r.peso === 'number' ? r.peso : 0), 0);
+  const totRighe = ris.reduce((s, x) => s + x.rows.length, 0);
+  const riass = `<div class="panel" style="padding:10px 14px"><b>${totRighe} ${totRighe === 1 ? 'riga trovata' : 'righe trovate'}</b> · ${ris.map(x => `<span style="margin-right:14px;${x.rows.length ? '' : 'opacity:.5'}">${LAV[x.k].nome}: <b>${x.rows.length}</b>${x.rows.length ? ' · ' + fmtKg2(pesoDi(x.rows)) + ' kg' : ''}</span>`).join('')}</div>`;
+  const tab = ({ k, rows }) => {
+    const cols = colRiep(k), R = f => KG_COLS.has(f) || f === 'forme' ? 'r' : '';
+    const tot = f => rows.reduce((s, r) => s + (typeof r[f] === 'number' ? r[f] : 0), 0);
+    return `<div class="panel" style="padding:0"><h3 style="padding:10px 14px;margin:0">${LAV[k].nome} <span style="font-weight:400;opacity:.7">· ${rows.length} ${rows.length === 1 ? 'riga' : 'righe'}</span></h3>` + (rows.length
+      ? `<div class="list-wrap"><table class="list" style="width:100%"><thead><tr>${cols.map(([f, l]) => `<th class="${R(f)}">${l}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${cols.map(([f]) => `<td class="${R(f)}">${esc(cellaRiep(f, r[f]))}</td>`).join('')}</tr>`).join('')}</tbody>
+        <tfoot><tr>${cols.map(([f], j) => `<td class="r">${j === 0 ? 'Totale' : (KG_COLS.has(f) && f !== 'media') ? fmtKg2(tot(f)) : f === 'forme' ? tot(f) : ''}</td>`).join('')}</tr></tfoot></table></div>`
+      : '<div class="empty" style="padding:6px 14px 12px">Nessuna riga</div>') + '</div>';
+  };
+  box.innerHTML = riass + ris.map(tab).join('');
+}
+function esportaCerca() {
+  const ris = risultatiCerca();
+  if (!ris || !ris.some(x => x.rows.length)) { toast('Nessun risultato da esportare', true); return; }
+  const fogli = ris.map(({ k, rows }) => {
+    const cols = colRiep(k);
+    const righe = [cols.map(c => c[1])].concat(rows.map(r => cols.map(([f]) => {
+      const v = r[f]; if (f === 'data') return isoToIt(v); if (f === 'piatti') return v ? 'X' : '';
+      return typeof v === 'number' ? (['mese', 'anno', 'n', 'forme', 'stag', 'pezzi'].includes(f) ? v : Math.round(v * 100) / 100) : (v ?? '');
+    })));
+    return { nome: LAV[k].xls, righe, grassetto: [0], interi: cols.map(([f], i) => f === 'anno' ? i : -1).filter(i => i >= 0), larghezze: cols.map(([f]) => f === 'marchio' ? 32 : f === 'data' ? 12 : 11) };
+  });
+  scarica(xlsxSemplice(fogli), 'Ricerca ' + RIEP.cq.trim().replace(/[^\w.-]+/g, '_') + '.xlsx');
 }
 function filtraRiep(rows) {
   const q = RIEP.q.trim().toLowerCase(); if (!q) return rows;
