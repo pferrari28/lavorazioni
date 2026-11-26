@@ -1232,7 +1232,7 @@ document.addEventListener('mouseup', () => {
   } else if (SEL.drag && SEL.ctrl && SEL.on) { SEL.keep = new Set([...SEL.keep]); }
   SEL.drag = false; SEL.ctrl = false;
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && SEL.on) azzeraSelezione(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && (SEL.on || SEL.keep.size || document.querySelector('#sheet.selmode, #sheet td.sel'))) azzeraSelezione(); });
 
 function onClickCella(e) {
   const td = e.target.closest('td.chk'); if (!td) return;
